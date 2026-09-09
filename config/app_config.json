@@ -1,0 +1,41 @@
+{
+  "app_name": "GPS Save Our Drivers",
+  "version": "1.0.0",
+  "data_dirs": {
+    "raw": "data/raw",
+    "processed": "data/processed",
+    "notes": "data/notes",
+    "bluetooth_inbox": "data/bluetooth_inbox"
+  },
+  "bluetooth": {
+    "auto_watch": true,
+    "poll_interval_seconds": 2,
+    "system_bluetooth_inboxes": [
+      "~/Documents/Bluetooth Exchange Folder",
+      "~/Downloads",
+      "~/AppData/Roaming/Garmin/Devices"
+    ]
+  },
+  "usb": {
+    "auto_watch": true,
+    "poll_interval_seconds": 3,
+    "garmin_activity_path": "GARMIN/ACTIVITY"
+  },
+  "freeroll_filters": {
+    "min_speed_mph": 6.0,
+    "max_speed_mph": 45.0,
+    "min_duration_seconds": 15,
+    "max_duration_seconds": 90,
+    "multi_watch_overlap_threshold_seconds": 12
+  },
+  "display": {
+    "default_speed_unit": "mph",
+    "distance_unit": "meters"
+  },
+  "google_drive": {
+    "enabled": true,
+    "folder_id": "14-_OwXAnPDy5IGTQA0J6V2-5wtKjJC8Y",
+    "client_secret_file": "client_secret.json",
+    "token_file": "token.json"
+  }
+}

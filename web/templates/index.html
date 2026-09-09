@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GPS Save Our Drivers | Apex Buggy Telemetry</title>
+
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <!-- App Stylesheet -->
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <header class="navbar">
+    <div class="brand-section">
+      <div class="brand-logo">
+        <img src="/static/apex.svg" alt="Apex Logo" style="width: 100%; height: 100%; object-fit: contain;">
+      </div>
+      <div>
+        <h1 class="brand-title">GPS SAVE OUR DRIVERS</h1>
+        <div class="brand-subtitle">Apex CMU Buggy Telemetry & Improvement Console</div>
+      </div>
+    </div>
+
+    <div class="nav-actions">
+      <div class="bt-status-badge" id="bt-status-indicator" title="Bluetooth sync is priority 1, monitoring incoming Bluetooth sync folders">
+        <span class="pulse-dot"></span>
+        <span id="bt-status-text">Bluetooth Priority Active</span>
+      </div>
+
+      <button class="btn" id="btn-rescan" title="Scan Bluetooth exchange folders and connected Garmin drives">
+        <span>🔄</span> Rescan Devices
+      </button>
+
+      <button class="btn" id="btn-drive-sync" title="Sync data to Google Drive">
+        <span>☁️</span> <span id="drive-sync-text">Drive</span>
+      </button>
+
+      <button class="btn btn-primary" id="btn-upload-modal">
+        <span>📤</span> Import GPS File
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-container">
+
+    <!-- Controls & Roll Selection Bar -->
+    <section class="controls-card">
+      <div class="selectors-group">
+        <div class="select-control">
+          <label for="primary-roll-select">Primary Roll (Current)</label>
+          <select id="primary-roll-select" class="custom-select"></select>
+        </div>
+
+        <div class="select-control">
+          <label for="compare-roll-select">Comparison Roll (Baseline / Previous)</label>
+          <select id="compare-roll-select" class="custom-select">
+            <option value="">(None - Solo Roll)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="watch-badge" id="watch-count-badge">
+        <span>🛰️</span> <b>Watches:</b> Detecting...
+      </div>
+    </section>
+
+    <!-- Segment Isolation Bar -->
+    <nav class="segment-bar" id="segment-bar" aria-label="Course Segments">
+      <!-- Generated dynamically by app.js -->
+    </nav>
+
+    <!-- Actionable Metrics HUD Cards -->
+    <section class="metrics-grid">
+      <!-- 1. Entry Speed -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Entry Speed (v_in)</span>
+          <span class="metric-icon">🚀</span>
+        </div>
+        <div class="metric-val-row">
+          <span class="metric-val" id="val-entry-speed">--.-</span>
+          <span class="metric-unit">mph</span>
+        </div>
+        <div class="metric-delta delta-neutral" id="delta-entry-speed" style="display:none;"></div>
+      </div>
+
+      <!-- 2. Apex / Min Speed -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Apex / Min Speed (v_min)</span>
+          <span class="metric-icon">🎯</span>
+        </div>
+        <div class="metric-val-row">
+          <span class="metric-val" id="val-apex-speed">--.-</span>
+          <span class="metric-unit">mph</span>
+        </div>
+        <div class="metric-delta delta-neutral" id="delta-apex-speed" style="display:none;"></div>
+      </div>
+
+      <!-- 3. Exit Speed -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Exit Speed (v_out)</span>
+          <span class="metric-icon">⚡</span>
+        </div>
+        <div class="metric-val-row">
+          <span class="metric-val" id="val-exit-speed">--.-</span>
+          <span class="metric-unit">mph</span>
+        </div>
+        <div class="metric-delta delta-neutral" id="delta-exit-speed" style="display:none;"></div>
+      </div>
+
+      <!-- 4. Delta Speed -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Speed Held (Δv)</span>
+          <span class="metric-icon">📈</span>
+        </div>
+        <div class="metric-val-row">
+          <span class="metric-val" id="val-delta-v">--.-</span>
+          <span class="metric-unit">mph</span>
+        </div>
+        <span style="font-size: 11px; color: var(--text-dim);">Net carry across segment</span>
+      </div>
+
+      <!-- 5. Transit Time -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Transit Time (Δt)</span>
+          <span class="metric-icon">⏱️</span>
+        </div>
+        <div class="metric-val-row">
+          <span class="metric-val" id="val-transit-time">--.--</span>
+          <span class="metric-unit">sec</span>
+        </div>
+        <div class="metric-delta delta-neutral" id="delta-transit-time" style="display:none;"></div>
+      </div>
+
+      <!-- 6. Distance -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Traveled Distance</span>
+          <span class="metric-icon">📏</span>
+        </div>
+        <div class="metric-val-row">
+          <span class="metric-val" id="val-distance">---.-</span>
+          <span class="metric-unit">m</span>
+        </div>
+        <span style="font-size: 11px; color: var(--text-dim);">Path length efficiency</span>
+      </div>
+    </section>
+
+    <!-- Telemetry Chart and Map Split -->
+    <section class="telemetry-row">
+      <!-- Left: Interactive Telemetry Chart -->
+      <div class="chart-card">
+        <div class="card-title-row">
+          <h2 class="card-title">
+            <span>📊</span> Segment Velocity Profile (v vs. Track Distance)
+          </h2>
+          <span style="font-size: 12px; color: var(--text-muted);">
+            Cyan = Current Roll | Amber = Comparison Roll
+          </span>
+        </div>
+        <div class="chart-container">
+          <canvas id="telemetry-canvas"></canvas>
+        </div>
+      </div>
+
+      <!-- Right: Interactive Satellite Course Map -->
+      <div class="map-card">
+        <div class="card-title-row">
+          <h2 class="card-title">
+            <span>🗺️</span> Schenley Park Freeroll Trajectory
+          </h2>
+          <span style="font-size: 12px; color: var(--text-muted);">
+            Auto-focuses on isolated segment
+          </span>
+        </div>
+        <div id="course-map"></div>
+      </div>
+    </section>
+
+    <!-- Driver Notes & Feedback Section -->
+    <section class="notes-card">
+      <div class="card-title-row">
+        <h2 class="card-title">
+          <span>📝</span> Driver Reflections & Roll Notes
+        </h2>
+        <button class="btn btn-primary" id="btn-save-notes">
+          <span>💾</span> Save Notes (Local & Drive Sync)
+        </button>
+      </div>
+
+      <div class="notes-grid">
+        <div class="input-field">
+          <label for="driver-name">Driver Name</label>
+          <input type="text" id="driver-name" class="text-input" placeholder="e.g. Sarah">
+        </div>
+
+        <div class="input-field">
+          <label for="buggy-name">Buggy Name</label>
+          <input type="text" id="buggy-name" class="text-input" placeholder="e.g. Firebird">
+        </div>
+
+        <div class="input-field">
+          <label for="segment-notes">Notes for [Active Segment]</label>
+          <input type="text" id="segment-notes" class="text-input" placeholder="e.g. High entry line felt much smoother, no brake scrubbing">
+        </div>
+      </div>
+
+      <div class="input-field">
+        <label for="general-notes">General Roll Impressions & Feedback</label>
+        <textarea id="general-notes" class="text-area" placeholder="How did the roll feel overall? Turn-in points, bumps, line exploration..."></textarea>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Upload Modal -->
+  <div class="modal-overlay" id="upload-modal">
+    <div class="modal-card">
+      <div class="card-title-row">
+        <h2 class="card-title">
+          <span>📥</span> Import Garmin GPS File
+        </h2>
+        <button class="btn" id="btn-close-modal" style="padding: 4px 8px;">✕</button>
+      </div>
+
+      <div class="drop-zone" id="drop-zone">
+        <div class="drop-zone-icon">📁</div>
+        <p style="font-weight: 700; font-size: 14px; margin-bottom: 6px;">Drag & drop Garmin .FIT or .GPX file here</p>
+        <p style="font-size: 12px; color: var(--text-muted);">or click to browse your computer</p>
+      </div>
+
+      <input type="file" id="file-input" accept=".fit,.gpx,.FIT,.GPX" style="display: none;">
+      
+      <p style="font-size: 11px; color: var(--text-dim); text-align: center;">
+        Tip: Bluetooth sync drops and mounted Garmin watches are auto-detected automatically.
+      </p>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast" id="toast">Feedback saved!</div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- App Scripts -->
+  <script src="/static/js/course_map.js"></script>
+  <script src="/static/js/telemetry_chart.js"></script>
+  <script src="/static/js/app.js"></script>
+
+</body>
+</html>

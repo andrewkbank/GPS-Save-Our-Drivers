@@ -1,0 +1,143 @@
+{
+  "course_name": "CMU Buggy Schenley Park Freeroll",
+  "reference_center": {
+    "lat": 40.4401,
+    "lon": -79.9455
+  },
+  "segments": [
+    {
+      "id": "hill2_drop",
+      "name": "Hill 2 Drop",
+      "description": "Pusher release at End of Hill 2 accelerating down Schenley Drive slope",
+      "color": "#3b82f6",
+      "start_gate": {
+        "name": "End of Hill 2",
+        "lat": 40.440172,
+        "lon": -79.942656,
+        "gate_line": [
+          {"lat": 40.440238, "lon": -79.942639},
+          {"lat": 40.440106, "lon": -79.942674}
+        ]
+      },
+      "end_gate": {
+        "name": "Start of Stop Sign Turn",
+        "lat": 40.438666,
+        "lon": -79.945526,
+        "gate_line": [
+          {"lat": 40.438724, "lon": -79.945535},
+          {"lat": 40.438609, "lon": -79.945516}
+        ]
+      },
+      "target_distance_m": 295
+    },
+    {
+      "id": "stop_sign_turn",
+      "name": "Stop Sign Turn",
+      "description": "Right curve sweeping around Westinghouse Pond past the stop sign",
+      "color": "#f59e0b",
+      "start_gate": {
+        "name": "Start of Stop Sign Turn",
+        "lat": 40.438666,
+        "lon": -79.945526,
+        "gate_line": [
+          {"lat": 40.438724, "lon": -79.945535},
+          {"lat": 40.438609, "lon": -79.945516}
+        ]
+      },
+      "end_gate": {
+        "name": "End of Stop Sign Turn",
+        "lat": 40.438998,
+        "lon": -79.946529,
+        "gate_line": [
+          {"lat": 40.439018, "lon": -79.946455},
+          {"lat": 40.438978, "lon": -79.946603}
+        ]
+      },
+      "target_distance_m": 93
+    },
+    {
+      "id": "monument_straight",
+      "name": "Monument Straightaway",
+      "description": "Fast straightaway past George Westinghouse Memorial settling into peak speed",
+      "color": "#10b981",
+      "start_gate": {
+        "name": "End of Stop Sign Turn",
+        "lat": 40.438998,
+        "lon": -79.946529,
+        "gate_line": [
+          {"lat": 40.439018, "lon": -79.946455},
+          {"lat": 40.438978, "lon": -79.946603}
+        ]
+      },
+      "end_gate": {
+        "name": "Start of Chute Entry",
+        "lat": 40.440584,
+        "lon": -79.947799,
+        "gate_line": [
+          {"lat": 40.440677, "lon": -79.947678},
+          {"lat": 40.440492, "lon": -79.947920}
+        ]
+      },
+      "target_distance_m": 207
+    },
+    {
+      "id": "chute_turn",
+      "name": "The Chute",
+      "description": "High-speed entry, apex sweep, and sharp right turn onto Frew Street",
+      "color": "#ef4444",
+      "start_gate": {
+        "name": "Start of Chute Entry",
+        "lat": 40.440584,
+        "lon": -79.947799,
+        "gate_line": [
+          {"lat": 40.440677, "lon": -79.947678},
+          {"lat": 40.440492, "lon": -79.947920}
+        ]
+      },
+      "apex_gate": {
+        "name": "Chute Apex",
+        "lat": 40.440870,
+        "lon": -79.948087,
+        "gate_line": [
+          {"lat": 40.440868, "lon": -79.948018},
+          {"lat": 40.440871, "lon": -79.948156}
+        ]
+      },
+      "end_gate": {
+        "name": "Chute Exit",
+        "lat": 40.440990,
+        "lon": -79.947952,
+        "gate_line": [
+          {"lat": 40.440967, "lon": -79.947914},
+          {"lat": 40.441014, "lon": -79.947989}
+        ]
+      },
+      "target_distance_m": 58
+    },
+    {
+      "id": "chute_rollout",
+      "name": "Chute Exit & Hill 3 Rollout",
+      "description": "Carrying momentum along Frew Street towards the Hill 3 pickup line",
+      "color": "#8b5cf6",
+      "start_gate": {
+        "name": "Chute Exit",
+        "lat": 40.440990,
+        "lon": -79.947952,
+        "gate_line": [
+          {"lat": 40.440967, "lon": -79.947914},
+          {"lat": 40.441014, "lon": -79.947989}
+        ]
+      },
+      "end_gate": {
+        "name": "Hill 3 Pickup",
+        "lat": 40.441454,
+        "lon": -79.946828,
+        "gate_line": [
+          {"lat": 40.441414, "lon": -79.946840},
+          {"lat": 40.441493, "lon": -79.946817}
+        ]
+      },
+      "target_distance_m": 108
+    }
+  ]
+}
