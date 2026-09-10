@@ -73,6 +73,10 @@ This automatically launches the local server and opens `http://127.0.0.1:5000` i
 python tests/test_pipeline.py
 ```
 
+### 4. Request access to Google Drive
+You will need `client_secret.json` and for someone with Google Cloud access to the official Apex Buggy account to give your Google account access.
+You can still save your rolls data locally without Google Drive access. It is only needed to automatically upload to the Apex Google Drive folder.
+
 ---
 
 ## Driver Notes & Google Drive Sync
