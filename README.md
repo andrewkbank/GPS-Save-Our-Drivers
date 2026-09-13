@@ -9,7 +9,7 @@ A lightweight, feedback-driven driver improvement and telemetry system for Carne
 Raceday footage demonstrates that driver skill, steering commitment, and line exploration play a decisive role in freeroll speed. Rather than imposing rigid, robotic lines or struggling with fragile RTK GPS setups, **GPS Save Our Drivers** empowers drivers to:
 1. **Explore their own decision space** (different turn-in points, scrubbing vs. holding roll speed, apex positioning).
 2. **Isolate small, meaningful course segments** (rather than noisy full-roll averages) to assess exact entry, apex, and exit speeds.
-3. **Receive rapid feedback at the truck** seconds after stepping out of the buggy.
+3. **Receive rapid feedback at the staging** seconds after stepping out of the buggy.
 
 ---
 
@@ -18,7 +18,7 @@ Raceday footage demonstrates that driver skill, steering commitment, and line ex
 Apex has 3x Garmin Forerunner 35 watches recording at 1 Hz with Doppler speed.
 
 ### Multi-Watch Pushbar Mounting
-- You can mount **1, 2, or all 3 Garmin watches** onto the buggy pushbar (e.g. one on the left bar, one on the right bar).
+- You can mount **1, 2, or all 3 Garmin watches** onto the buggy pushbar.
 - **Auto-Detection of Same Roll**: Because Garmin internal clocks synchronize to GPS satellite atomic time upon satellite lock, the software automatically detects when multiple watches were recording the same roll.
 - **Sensor Fusion & Spline Smoothing**: The system combines multiple 1 Hz streams, performing spatial averaging, Doppler velocity fusion, and local metric spline smoothing to eliminate individual 3–5m GPS noise and deliver a smooth, crisp speed and trajectory profile.
 
