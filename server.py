@@ -316,7 +316,7 @@ def api_drive_auth():
 
 @app.route("/api/drive/sync", methods=["POST"])
 def api_drive_sync():
-    """Two-way sync: Upload local telemetry/notes and download missing remote files."""
+    """Two-way sync: Upload local telemetry/notes and download routed remote files."""
     # 1. Upload local files
     raw_files = glob.glob(os.path.join(DATA_RAW, "*.*"))
     notes_files = glob.glob(os.path.join(DATA_NOTES, "*.*"))
@@ -324,8 +324,13 @@ def api_drive_sync():
 
     upload_res = drive_sync.sync_files(all_files)
 
-    # 2. Download missing remote files into local directory (e.g., DATA_RAW)
-    download_res = drive_sync.download_missing_files(DATA_RAW) if upload_res.get("success") else {
+    # 2. Download missing remote files with automatic extension routing
+    routing_config = {
+        DATA_RAW: [".fit", ".gpx"],
+        DATA_NOTES: [".json", ".txt", ".log"]
+    }
+
+    download_res = drive_sync.download_missing_files(routing_config) if upload_res.get("success") else {
         "success": False, 
         "error": "Skipped download due to upload failure."
     }
