@@ -316,15 +316,29 @@ def api_drive_auth():
 
 @app.route("/api/drive/sync", methods=["POST"])
 def api_drive_sync():
-    """Upload all raw telemetry and driver notes directly to Google Drive."""
+    """Two-way sync: Upload local telemetry/notes and download missing remote files."""
+    # 1. Upload local files
     raw_files = glob.glob(os.path.join(DATA_RAW, "*.*"))
     notes_files = glob.glob(os.path.join(DATA_NOTES, "*.*"))
     all_files = raw_files + notes_files
 
-    res = drive_sync.sync_files(all_files)
-    folder_files = drive_sync.list_folder_files() if res.get("success") else []
+    upload_res = drive_sync.sync_files(all_files)
+
+    # 2. Download missing remote files into local directory (e.g., DATA_RAW)
+    download_res = drive_sync.download_missing_files(DATA_RAW) if upload_res.get("success") else {
+        "success": False, 
+        "error": "Skipped download due to upload failure."
+    }
+
+    # 3. Refresh directory listing
+    folder_files = drive_sync.list_folder_files() if upload_res.get("success") else []
+
+    overall_success = upload_res.get("success", False) and download_res.get("success", False)
+
     return jsonify({
-        "result": res,
+        "success": overall_success,
+        "upload_result": upload_res,
+        "download_result": download_res,
         "folder_files": folder_files
     })
 

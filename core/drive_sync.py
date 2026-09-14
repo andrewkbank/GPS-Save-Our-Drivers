@@ -1,9 +1,10 @@
 """
 Google Drive Sync Helper for GPS Save Our Drivers.
-Provides User OAuth 2.0 desktop authentication and direct sync of raw FIT/GPX files
-and driver notes to the designated team Google Drive folder.
+Provides User OAuth 2.0 desktop authentication and direct sync/download of raw FIT/GPX files
+and driver notes to/from the designated team Google Drive folder.
 """
 
+import io
 import os
 import json
 import glob
@@ -13,7 +14,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 SCOPES = [
     "https://www.googleapis.com/auth/drive"
@@ -21,7 +22,7 @@ SCOPES = [
 
 
 class DriveSyncHelper:
-    """Manages User OAuth authentication and file syncing to Google Drive."""
+    """Manages User OAuth authentication and file syncing to/from Google Drive."""
 
     def __init__(self, config_path: str):
         self.config_path = config_path
@@ -264,3 +265,66 @@ class DriveSyncHelper:
             print(f"[DriveSync] Error listing folder files: {e}")
             return []
 
+    def download_missing_files(self, local_destination_dir: str) -> Dict[str, Any]:
+        """
+        Fetches files from the designated Drive folder and downloads any file
+        that does not exist in local_destination_dir.
+        """
+        if not self.folder_id:
+            return {
+                "success": False,
+                "error": "Target folder_id is not specified in config/app_config.json"
+            }
+
+        creds = self.get_credentials()
+        if not creds:
+            return {
+                "success": False,
+                "error": "Google Drive authentication required."
+            }
+
+        try:
+            service = build("drive", "v3", credentials=creds, cache_discovery=False)
+            os.makedirs(local_destination_dir, exist_ok=True)
+
+            # Get remote files list
+            remote_files = self.list_folder_files()
+            downloaded = []
+
+            for remote_file in remote_files:
+                file_id = remote_file["id"]
+                file_name = remote_file["name"]
+                
+                # Ignore sub-folders or native Google Workspace Docs/Sheets
+                if remote_file.get("mimeType") == "application/vnd.google-apps.folder":
+                    continue
+
+                local_file_path = os.path.join(local_destination_dir, file_name)
+
+                # Skip download if file already exists locally
+                if os.path.exists(local_file_path):
+                    continue
+
+                # Stream and save missing file
+                request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+                with open(local_file_path, "wb") as f:
+                    downloader = MediaIoBaseDownload(f, request)
+                    done = False
+                    while not done:
+                        status, done = downloader.next_chunk()
+
+                downloaded.append({"name": file_name, "id": file_id, "path": local_file_path})
+
+            return {
+                "success": True,
+                "downloaded_count": len(downloaded),
+                "downloaded_files": downloaded,
+                "message": f"Successfully downloaded {len(downloaded)} missing file(s)."
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "message": f"Downloading files failed: {e}"
+            }
