@@ -289,6 +289,7 @@ class MultiWatchFusion:
                     "device_id": r.get("device_id", f"watch_{i+1}"),
                     "device_name": r.get("device_name", f"Garmin {i+1}"),
                     "source_file": r.get("source_file", ""),
+                    "full_path": r.get("full_path", ""),
                     "point_count": len(r.get("records", []))
                 }
                 for i, r in enumerate(raw_runs)

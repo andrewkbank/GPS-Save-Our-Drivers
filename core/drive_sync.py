@@ -158,8 +158,8 @@ class DriveSyncHelper:
 
     def sync_files(self, filepaths: List[str]) -> Dict[str, Any]:
         """
-        Upload valid roll files to Google Drive, renaming them using 'roll_id' 
-        from their associated JSON metadata file.
+        Upload specified files to Google Drive folder, updating existing files in-place
+        or uploading new files if not present in the Drive folder.
         """
         if not self.folder_id:
             return {
@@ -175,66 +175,49 @@ class DriveSyncHelper:
             }
 
         try:
-            # 1. Group input files by stem (filename without extension) to discover pairs
-            file_groups = {}
-            for fp in filepaths:
-                if os.path.exists(fp):
-                    stem = os.path.splitext(os.path.basename(fp))[0]
-                    file_groups.setdefault(stem, []).append(fp)
-
-            # 2. Filter valid rolls and map local paths to target Drive filenames
-            upload_queue = []  # List of tuples: (local_file_path, target_drive_filename)
-
-            for stem, paths in file_groups.items():
-                json_path = next((p for p in paths if p.lower().endswith('.json')), None)
-                if not json_path:
-                    continue  # Skip if no corresponding JSON file exists
-
-                # Read and validate JSON metadata
-                try:
-                    with open(json_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-
-                    gen_notes = data.get("general_notes")
-                    seg_notes = data.get("segment_notes")
-                    roll_id = data.get("roll_id")
-
-                    # Check if notes are empty or invalid
-                    has_gen_notes = bool(gen_notes and str(gen_notes).strip())
-                    has_seg_notes = bool(seg_notes and len(seg_notes) > 0)
-
-                    if not (has_gen_notes or has_seg_notes):
-                        continue  # Skip rolls with no notes content
-
-                    # Fallback to stem if roll_id is missing or empty
-                    target_base_name = str(roll_id).strip() if roll_id else stem
-
-                except Exception as e:
-                    print(f"[DriveSync] Error reading JSON metadata {json_path}: {e}")
-                    continue
-
-                # Add all associated files for this valid roll to the upload queue
-                for fp in paths:
-                    ext = os.path.splitext(fp)[1]
-                    drive_filename = f"{target_base_name}{ext}"
-                    upload_queue.append((fp, drive_filename))
-
-            # 3. Perform Google Drive upload / update
             service = build("drive", "v3", credentials=creds, cache_discovery=False)
 
-            q_query = f"'{self.folder_id}' in parents and trashed = false"
-            res = service.files().list(
-                q=q_query,
-                fields="files(id, name)",
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True
-            ).execute()
-            existing_files = {item["name"]: item["id"] for item in res.get("files", [])}
+            # Query existing files in destination folder (with pagination)
+            existing_items = self.list_folder_files()
+            # Group existing items by normalized lowercase name
+            existing_files_lower: Dict[str, List[Dict[str, Any]]] = {}
+            for item in existing_items:
+                name = item.get("name", "")
+                if name and "id" in item:
+                    existing_files_lower.setdefault(name.lower(), []).append(item)
 
             synced = []
-            for local_path, target_fname in upload_queue:
-                ext = os.path.splitext(target_fname)[1].lower()
+            for fp in filepaths:
+                if not fp or not os.path.exists(fp):
+                    continue
 
+                target_fname = os.path.basename(fp)
+                ext = os.path.splitext(target_fname)[1].lower()
+                target_lower = target_fname.lower()
+
+                # Rule 1: GPS files (.fit, .gpx) are immutable.
+                # If already present on Google Drive, skip uploading to save bandwidth and avoid duplicates.
+                if ext in (".fit", ".gpx"):
+                    if target_lower in existing_files_lower:
+                        matches = existing_files_lower[target_lower]
+                        matched_id = matches[0]["id"]
+
+                        # Clean up any redundant duplicate GPS files in Drive from previous runs
+                        if len(matches) > 1:
+                            for duplicate in matches[1:]:
+                                try:
+                                    service.files().delete(fileId=duplicate["id"], supportsAllDrives=True).execute()
+                                except Exception as del_err:
+                                    print(f"[DriveSync] Note: could not delete duplicate {duplicate['id']}: {del_err}")
+
+                        synced.append({
+                            "name": target_fname,
+                            "id": matched_id,
+                            "action": "skipped_already_exists"
+                        })
+                        continue
+
+                # Rule 2: Notes (.json, .txt, .log) should always be overwritten/updated in-place.
                 # Infer MIME type
                 if ext == ".json":
                     mimetype = "application/json"
@@ -247,17 +230,26 @@ class DriveSyncHelper:
                 else:
                     mimetype = "application/octet-stream"
 
-                media = MediaFileUpload(local_path, mimetype=mimetype, resumable=True)
+                media = MediaFileUpload(fp, mimetype=mimetype, resumable=True)
 
-                if target_fname in existing_files:
-                    # Update existing file content
-                    file_id = existing_files[target_fname]
+                if target_lower in existing_files_lower:
+                    # Update existing file content in-place
+                    matches = existing_files_lower[target_lower]
+                    file_id = matches[0]["id"]
                     service.files().update(
                         fileId=file_id,
                         media_body=media,
                         supportsAllDrives=True
                     ).execute()
                     synced.append({"name": target_fname, "id": file_id, "action": "updated"})
+
+                    # If multiple copies existed with the same name, delete redundant duplicates
+                    if len(matches) > 1:
+                        for duplicate in matches[1:]:
+                            try:
+                                service.files().delete(fileId=duplicate["id"], supportsAllDrives=True).execute()
+                            except Exception as del_err:
+                                print(f"[DriveSync] Note: could not delete duplicate {duplicate['id']}: {del_err}")
                 else:
                     # Create new file inside target folder
                     meta = {
@@ -270,14 +262,24 @@ class DriveSyncHelper:
                         fields="id, name",
                         supportsAllDrives=True
                     ).execute()
-                    synced.append({"name": target_fname, "id": created.get("id"), "action": "uploaded"})
+                    file_id = created.get("id")
+                    existing_files_lower.setdefault(target_lower, []).append({"name": target_fname, "id": file_id})
+                    synced.append({"name": target_fname, "id": file_id, "action": "uploaded"})
+
+            uploaded_count = len([s for s in synced if s["action"] == "uploaded"])
+            updated_count = len([s for s in synced if s["action"] == "updated"])
+            skipped_count = len([s for s in synced if s["action"] == "skipped_already_exists"])
+            active_synced_count = uploaded_count + updated_count
 
             return {
                 "success": True,
-                "synced_count": len(synced),
+                "synced_count": active_synced_count,
+                "uploaded_count": uploaded_count,
+                "updated_count": updated_count,
+                "skipped_count": skipped_count,
                 "synced_files": synced,
                 "folder_id": self.folder_id,
-                "message": f"Successfully synced {len(synced)} file(s) to Google Drive folder."
+                "message": f"Sync completed: {uploaded_count} uploaded, {updated_count} updated, {skipped_count} unchanged GPS files skipped."
             }
 
         except Exception as e:
@@ -288,7 +290,7 @@ class DriveSyncHelper:
             }
 
     def list_folder_files(self) -> List[Dict[str, Any]]:
-        """List files currently residing in the target Google Drive folder."""
+        """List all files currently residing in the target Google Drive folder using pagination."""
         creds = self.get_credentials()
         if not creds or not self.folder_id:
             return []
@@ -296,21 +298,32 @@ class DriveSyncHelper:
         try:
             service = build("drive", "v3", credentials=creds, cache_discovery=False)
             q_query = f"'{self.folder_id}' in parents and trashed = false"
-            res = service.files().list(
-                q=q_query,
-                fields="files(id, name, size, modifiedTime, mimeType)",
-                pageSize=100,
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True
-            ).execute()
-            return res.get("files", [])
+            files: List[Dict[str, Any]] = []
+            page_token = None
+
+            while True:
+                res = service.files().list(
+                    q=q_query,
+                    fields="nextPageToken, files(id, name, size, modifiedTime, mimeType)",
+                    pageSize=100,
+                    pageToken=page_token,
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True
+                ).execute()
+                files.extend(res.get("files", []))
+                page_token = res.get("nextPageToken")
+                if not page_token:
+                    break
+
+            return files
         except Exception as e:
             print(f"[DriveSync] Error listing folder files: {e}")
             return []
 
     def download_missing_files(self, target_dirs: Dict[str, List[str]]) -> Dict[str, Any]:
         """
-        Downloads missing remote files and routes them into specific local directories based on extension.
+        Downloads missing remote files from Google Drive and routes them into specific local
+        directories based on extension.
         
         Example target_dirs input:
         {
@@ -341,13 +354,13 @@ class DriveSyncHelper:
                 for ext in ext_list:
                     ext_map[ext.lower()] = dir_path
 
-            # Get remote files list
+            # Get complete remote files list with pagination
             remote_files = self.list_folder_files()
             downloaded = []
 
             for remote_file in remote_files:
-                file_id = remote_file["id"]
-                file_name = remote_file["name"]
+                file_id = remote_file.get("id")
+                file_name = remote_file.get("name", "")
                 
                 # Skip sub-folders / native Google Workspace Docs
                 if remote_file.get("mimeType") == "application/vnd.google-apps.folder":
@@ -358,14 +371,27 @@ class DriveSyncHelper:
                 # Determine correct local directory target for this file extension
                 dest_dir = ext_map.get(ext)
                 if not dest_dir:
-                    # Extension not mapped to any directory, skip downloading
                     continue
 
                 local_file_path = os.path.join(dest_dir, file_name)
 
-                # Skip download if file already exists locally
-                if os.path.exists(local_file_path):
+                # Skip download if file already exists locally (case-insensitive check)
+                existing_local_names = {f.lower() for f in os.listdir(dest_dir)}
+                if file_name.lower() in existing_local_names:
                     continue
+
+                # For notes JSON files, avoid downloading if either {clean_id}_notes.json
+                # or legacy {clean_id}.json already exists locally
+                if ext == ".json":
+                    if file_name.endswith("_notes.json"):
+                        legacy_name = file_name.replace("_notes.json", ".json")
+                        if os.path.exists(os.path.join(dest_dir, legacy_name)):
+                            continue
+                    else:
+                        base_name = os.path.splitext(file_name)[0]
+                        standard_name = f"{base_name}_notes.json"
+                        if os.path.exists(os.path.join(dest_dir, standard_name)):
+                            continue
 
                 # Stream and save missing file
                 request = service.files().get_media(fileId=file_id, supportsAllDrives=True)

@@ -109,7 +109,28 @@ def get_all_grouped_rolls():
 
         # Check for existing notes
         notes = notes_mgr.get_notes(roll_id)
-        has_notes = bool(notes.get("general_notes") or notes.get("segment_notes"))
+        has_notes = roll_has_notes(notes)
+        driver_name = notes.get("driver_name", "")
+        buggy_name = notes.get("buggy_name", "")
+
+        # Extract GPS filenames
+        gps_files = []
+        for d in fused_roll.get("watch_devices", []):
+            fname = os.path.basename(d.get("source_file", ""))
+            if fname and fname not in gps_files:
+                gps_files.append(fname)
+
+        # Extract Notes filenames
+        json_path, txt_path = notes_mgr._get_paths(roll_id)
+        notes_files = []
+        if os.path.exists(json_path):
+            notes_files.append(os.path.basename(json_path))
+        if os.path.exists(txt_path):
+            notes_files.append(os.path.basename(txt_path))
+        clean_id = roll_id.replace(":", "-").replace("/", "_")
+        legacy_json = os.path.join(notes_mgr.notes_dir, f"{clean_id}.json")
+        if os.path.exists(legacy_json) and os.path.basename(legacy_json) not in notes_files:
+            notes_files.append(os.path.basename(legacy_json))
 
         display_time = "Unknown Time"
         if fused_roll.get("start_time"):
@@ -131,10 +152,85 @@ def get_all_grouped_rolls():
             "watch_count": fused_roll["watch_count"],
             "watch_summary": watch_names,
             "has_notes": has_notes,
+            "driver_name": driver_name,
+            "buggy_name": buggy_name,
+            "gps_files": gps_files,
+            "notes_files": notes_files,
             "fused_roll": fused_roll
         })
 
     return grouped
+
+
+def roll_has_notes(notes: dict) -> bool:
+    """Check if a notes dictionary contains non-empty driver reflections."""
+    if not notes:
+        return False
+    gen = notes.get("general_notes")
+    if gen and str(gen).strip():
+        return True
+    seg = notes.get("segment_notes")
+    if seg and isinstance(seg, dict):
+        for v in seg.values():
+            if v and str(v).strip():
+                return True
+    return False
+
+
+def get_roll_gps_files(roll_id: str) -> list:
+    """Return paths of all GPS files (.fit, .gpx) associated with this roll_id."""
+    rolls = get_all_grouped_rolls()
+    for r in rolls:
+        if r["roll_id"] == roll_id:
+            gps_files = []
+            for d in r.get("fused_roll", {}).get("watch_devices", []):
+                src = d.get("full_path") or os.path.join(DATA_RAW, d.get("source_file", ""))
+                if src and os.path.exists(src):
+                    gps_files.append(os.path.normpath(src))
+            return gps_files
+    return []
+
+
+def get_syncable_files() -> list:
+    """
+    Find all files eligible for Google Drive upload:
+    Only GPS files belonging to rolls with notes are included,
+    along with their companion notes files. Personal activities are excluded.
+    """
+    rolls = get_all_grouped_rolls()
+    files_to_sync = set()
+
+    for r in rolls:
+        r_id = r["roll_id"]
+        notes = notes_mgr.get_notes(r_id)
+        if roll_has_notes(notes):
+            # Collect GPS files for this roll
+            for d in r.get("fused_roll", {}).get("watch_devices", []):
+                src = d.get("full_path") or os.path.join(DATA_RAW, d.get("source_file", ""))
+                if src and os.path.exists(src):
+                    files_to_sync.add(os.path.normpath(src))
+
+            # Collect notes files for this roll
+            json_path, txt_path = notes_mgr._get_paths(r_id)
+            if os.path.exists(json_path):
+                files_to_sync.add(os.path.normpath(json_path))
+            if os.path.exists(txt_path):
+                files_to_sync.add(os.path.normpath(txt_path))
+
+    # Also check for any standalone notes in DATA_NOTES that have notes content
+    for n_file in glob.glob(os.path.join(DATA_NOTES, "*.json")):
+        try:
+            with open(n_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if roll_has_notes(data):
+                files_to_sync.add(os.path.normpath(n_file))
+                txt_equiv = n_file.replace(".json", ".txt")
+                if os.path.exists(txt_equiv):
+                    files_to_sync.add(os.path.normpath(txt_equiv))
+        except Exception:
+            pass
+
+    return sorted(list(files_to_sync))
 
 
 @app.route("/")
@@ -164,7 +260,11 @@ def api_rolls():
             "max_speed_mph": r["max_speed_mph"],
             "watch_count": r["watch_count"],
             "watch_summary": r["watch_summary"],
-            "has_notes": r["has_notes"]
+            "has_notes": r["has_notes"],
+            "driver_name": r.get("driver_name", ""),
+            "buggy_name": r.get("buggy_name", ""),
+            "gps_files": r.get("gps_files", []),
+            "notes_files": r.get("notes_files", [])
         }
         for r in rolls
     ]
@@ -186,7 +286,11 @@ def api_roll_detail(roll_id):
         "roll": fused_roll,
         "segments": segmented["segments"],
         "course_segments_meta": segmenter.segments,
-        "notes": notes
+        "notes": notes,
+        "associated_files": {
+            "gps_files": match.get("gps_files", []),
+            "notes_files": match.get("notes_files", [])
+        }
     })
 
 
@@ -274,22 +378,25 @@ def api_compare():
 def api_notes(roll_id):
     if request.method == "POST":
         data = request.json or {}
+        gps_files = get_roll_gps_files(roll_id)
         saved = notes_mgr.save_notes(
             roll_id=roll_id,
             driver_name=data.get("driver_name", ""),
             buggy_name=data.get("buggy_name", ""),
             general_notes=data.get("general_notes", ""),
-            segment_notes=data.get("segment_notes", {})
+            segment_notes=data.get("segment_notes", {}),
+            gps_files=gps_files
         )
-        # If Google Drive is authenticated, auto-sync driver notes
-        try:
-            note_file = os.path.join(DATA_NOTES, f"{roll_id}_notes.json")
-            note_txt = os.path.join(DATA_NOTES, f"{roll_id}_notes.txt")
-            sync_targets = [f for f in (note_file, note_txt) if os.path.exists(f)]
-            if sync_targets and drive_sync.get_status().get("authenticated"):
-                drive_sync.sync_files(sync_targets)
-        except Exception as e:
-            print(f"Error auto-syncing notes to Drive: {e}")
+        # If Google Drive is authenticated and this roll has notes, auto-sync
+        if roll_has_notes(saved) and drive_sync.get_status().get("authenticated"):
+            try:
+                json_path, txt_path = notes_mgr._get_paths(roll_id)
+                sync_targets = [f for f in (json_path, txt_path) if os.path.exists(f)]
+                sync_targets.extend(gps_files)
+                if sync_targets:
+                    drive_sync.sync_files(sync_targets)
+            except Exception as e:
+                print(f"Error auto-syncing notes and GPS files to Drive: {e}")
 
         return jsonify({"success": True, "notes": saved})
     else:
@@ -316,13 +423,10 @@ def api_drive_auth():
 
 @app.route("/api/drive/sync", methods=["POST"])
 def api_drive_sync():
-    """Two-way sync: Upload local telemetry/notes and download routed remote files."""
-    # 1. Upload local files
-    raw_files = glob.glob(os.path.join(DATA_RAW, "*.*"))
-    notes_files = glob.glob(os.path.join(DATA_NOTES, "*.*"))
-    all_files = raw_files + notes_files
-
-    upload_res = drive_sync.sync_files(all_files)
+    """Two-way sync: Upload local rolls with notes and download missing remote files."""
+    # 1. Upload local files (only rolls that have driver notes)
+    syncable_files = get_syncable_files()
+    upload_res = drive_sync.sync_files(syncable_files)
 
     # 2. Download missing remote files with automatic extension routing
     routing_config = {
@@ -330,13 +434,14 @@ def api_drive_sync():
         DATA_NOTES: [".json", ".txt", ".log"]
     }
 
-    download_res = drive_sync.download_missing_files(routing_config) if upload_res.get("success") else {
-        "success": False, 
-        "error": "Skipped download due to upload failure."
-    }
+    download_res = drive_sync.download_missing_files(routing_config)
 
-    # 3. Refresh directory listing
-    folder_files = drive_sync.list_folder_files() if upload_res.get("success") else []
+    # 3. If any new files were downloaded, clear parsed runs cache so UI picks them up
+    if download_res.get("downloaded_count", 0) > 0:
+        parsed_cache.clear()
+
+    # 4. Refresh directory listing
+    folder_files = drive_sync.list_folder_files()
 
     overall_success = upload_res.get("success", False) and download_res.get("success", False)
 
@@ -362,12 +467,8 @@ def api_upload():
     file.save(dest_path)
     parsed_cache.clear()
 
-    # If Drive is authenticated, also sync new file to Drive
-    if drive_sync.get_status().get("authenticated"):
-        try:
-            drive_sync.sync_files([dest_path])
-        except Exception as e:
-            print(f"Error auto-syncing uploaded file: {e}")
+    # Note: We intentionally do NOT auto-upload raw GPS files here.
+    # Telemetry is only uploaded once driver notes are attached, protecting personal watch runs.
 
     return jsonify({
         "success": True,

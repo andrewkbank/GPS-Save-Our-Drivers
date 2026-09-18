@@ -55,22 +55,44 @@
 
     <!-- Controls & Roll Selection Bar -->
     <section class="controls-card">
-      <div class="selectors-group">
-        <div class="select-control">
-          <label for="primary-roll-select">Primary Roll (Current)</label>
-          <select id="primary-roll-select" class="custom-select"></select>
+      <div class="controls-top-row">
+        <div class="selectors-group">
+          <div class="select-control">
+            <label for="primary-roll-select">Primary Roll (Current)</label>
+            <select id="primary-roll-select" class="custom-select"></select>
+          </div>
+
+          <div class="select-control">
+            <label for="compare-roll-select">Comparison Roll (Baseline / Previous)</label>
+            <select id="compare-roll-select" class="custom-select">
+              <option value="">(None - Solo Roll)</option>
+            </select>
+          </div>
         </div>
 
-        <div class="select-control">
-          <label for="compare-roll-select">Comparison Roll (Baseline / Previous)</label>
-          <select id="compare-roll-select" class="custom-select">
-            <option value="">(None - Solo Roll)</option>
-          </select>
+        <div class="watch-badge" id="watch-count-badge">
+          <span>🛰️</span> <b>Watches:</b> Detecting...
         </div>
       </div>
 
-      <div class="watch-badge" id="watch-count-badge">
-        <span>🛰️</span> <b>Watches:</b> Detecting...
+      <!-- Associated Files & Debug Component -->
+      <div class="files-debug-bar" id="files-debug-bar">
+        <div class="debug-tag">
+          <span class="debug-icon">📁</span>
+          <span class="debug-title">Associated Files</span>
+        </div>
+        <div class="debug-meta-item">
+          <span class="debug-label">Roll ID:</span>
+          <code class="debug-code" id="debug-roll-id">--</code>
+        </div>
+        <div class="debug-meta-item">
+          <span class="debug-label">GPS File(s):</span>
+          <code class="debug-code debug-code-gps" id="debug-gps-files">--</code>
+        </div>
+        <div class="debug-meta-item">
+          <span class="debug-label">Notes File(s):</span>
+          <code class="debug-code debug-code-notes" id="debug-notes-files">--</code>
+        </div>
       </div>
     </section>
 

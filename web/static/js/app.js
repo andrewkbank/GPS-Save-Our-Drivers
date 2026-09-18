@@ -44,6 +44,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const segmentNotesInput = document.getElementById('segment-notes');
   const btnSaveNotes = document.getElementById('btn-save-notes');
 
+  // Debug Files Elements
+  const debugRollId = document.getElementById('debug-roll-id');
+  const debugGpsFiles = document.getElementById('debug-gps-files');
+  const debugNotesFiles = document.getElementById('debug-notes-files');
+
   // Metric HUD Elements
   const valEntry = document.getElementById('val-entry-speed');
   const valApex = document.getElementById('val-apex-speed');
@@ -111,6 +116,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function fetchRolls() {
     try {
+      const prevPrimary = primarySelect.value;
+      const prevCompare = compareSelect.value;
+
       const res = await fetch('/api/rolls');
       const data = await res.json();
       allRolls = data.rolls || [];
@@ -118,8 +126,8 @@ document.addEventListener('DOMContentLoaded', () => {
       populateSelects();
 
       if (allRolls.length > 0) {
-        currentRollId = allRolls[0].roll_id;
-        compareRollId = allRolls.length > 1 ? allRolls[1].roll_id : null;
+        currentRollId = prevPrimary && allRolls.some(r => r.roll_id === prevPrimary) ? prevPrimary : allRolls[0].roll_id;
+        compareRollId = prevCompare && allRolls.some(r => r.roll_id === prevCompare) ? prevCompare : (allRolls.length > 1 ? allRolls[1].roll_id : null);
         primarySelect.value = currentRollId;
         compareSelect.value = compareRollId || '';
         await loadRollDetail(currentRollId);
@@ -130,19 +138,37 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function formatRollLabel(r) {
+    const driver = (r.driver_name && r.driver_name !== 'Unknown Driver') ? r.driver_name.trim() : '';
+    const buggy = (r.buggy_name && r.buggy_name !== 'Apex Buggy') ? r.buggy_name.trim() : (r.buggy_name ? r.buggy_name.trim() : '');
+
+    let metaTag = '';
+    if (driver && buggy) {
+      metaTag = ` [${driver} • ${buggy}]`;
+    } else if (driver) {
+      metaTag = ` [Driver: ${driver}]`;
+    } else if (buggy && buggy !== 'Apex Buggy') {
+      metaTag = ` [Buggy: ${buggy}]`;
+    }
+
+    return `${r.display_name}${metaTag} — Max ${r.max_speed_mph} mph`;
+  }
+
   function populateSelects() {
     primarySelect.innerHTML = '';
     compareSelect.innerHTML = '<option value="">(None - Solo Roll)</option>';
 
-    allRolls.forEach((r, idx) => {
+    allRolls.forEach((r) => {
+      const label = formatRollLabel(r);
+
       const opt1 = document.createElement('option');
       opt1.value = r.roll_id;
-      opt1.textContent = `${r.display_name} - Max ${r.max_speed_mph} mph`;
+      opt1.textContent = label;
       primarySelect.appendChild(opt1);
 
       const opt2 = document.createElement('option');
       opt2.value = r.roll_id;
-      opt2.textContent = `${r.display_name} - Max ${r.max_speed_mph} mph`;
+      opt2.textContent = label;
       compareSelect.appendChild(opt2);
     });
   }
@@ -157,6 +183,19 @@ document.addEventListener('DOMContentLoaded', () => {
       const count = currentRollDetail.roll.watch_count || 1;
       const watchSummary = currentRollDetail.roll.watch_devices.map(d => d.device_name).join(' + ');
       watchBadge.innerHTML = `<span>🛰️</span> <b>${count} Watch${count > 1 ? 'es Fused' : ''}:</b> ${watchSummary}`;
+
+      // Update files debug component
+      if (debugRollId) debugRollId.textContent = rollId;
+      const assoc = currentRollDetail.associated_files || {};
+      const gpsList = (assoc.gps_files && assoc.gps_files.length)
+        ? assoc.gps_files.join(', ')
+        : (currentRollDetail.roll && currentRollDetail.roll.watch_devices ? currentRollDetail.roll.watch_devices.map(d => d.source_file).filter(Boolean).join(', ') : '(None)');
+      const notesList = (assoc.notes_files && assoc.notes_files.length)
+        ? assoc.notes_files.join(', ')
+        : '(None on disk)';
+
+      if (debugGpsFiles) debugGpsFiles.textContent = gpsList || '(None)';
+      if (debugNotesFiles) debugNotesFiles.textContent = notesList || '(None)';
 
       // Render segment bar buttons if not done
       if (segmentsMeta.length === 0) {
@@ -366,31 +405,50 @@ document.addEventListener('DOMContentLoaded', () => {
             const authRes = await fetch('/api/drive/auth', { method: 'POST' });
             const authData = await authRes.json();
             if (authData.success) {
-              showToast('Google Drive connected! Syncing test data...');
+              showToast('Google Drive connected! Syncing data...');
               driveSyncText.textContent = 'Syncing...';
               const syncRes = await fetch('/api/drive/sync', { method: 'POST' });
               const syncData = await syncRes.json();
-              const res = syncData.result || {};
-              showToast(res.message || 'Synced to Drive!');
+              const up = syncData.upload_result || {};
+              const down = syncData.download_result || {};
+              const upCount = up.synced_count || 0;
+              const downCount = down.downloaded_count || 0;
+              showToast(`Connected & synced: uploaded ${upCount}, downloaded ${downCount} file(s).`);
             } else {
               showToast('Authentication cancelled or failed: ' + (authData.error || ''));
             }
           } else {
             driveSyncText.textContent = 'Syncing...';
-            showToast('Syncing all rolls and notes to Drive...');
+            showToast('Syncing rolls and notes with Google Drive...');
             const syncRes = await fetch('/api/drive/sync', { method: 'POST' });
             const syncData = await syncRes.json();
-            const res = syncData.result || {};
-            if (res.success) {
-              showToast(`Synced ${res.synced_count} file(s) to Google Drive!`);
+            const up = syncData.upload_result || {};
+            const down = syncData.download_result || {};
+
+            if (syncData.success) {
+              const uploaded = up.uploaded_count || 0;
+              const updated = up.updated_count || 0;
+              const downloaded = down.downloaded_count || 0;
+              const skipped = up.skipped_count || 0;
+
+              const parts = [];
+              if (uploaded > 0) parts.push(`uploaded ${uploaded}`);
+              if (updated > 0) parts.push(`updated ${updated}`);
+              if (downloaded > 0) parts.push(`downloaded ${downloaded}`);
+              if (skipped > 0) parts.push(`${skipped} existing GPS files unchanged`);
+
+              const msg = parts.length > 0 ? parts.join(', ') : 'everything up to date';
+              showToast(`Sync complete: ${msg}.`);
             } else {
-              showToast('Sync error: ' + (res.error || res.message));
+              const errMsg = up.error || down.error || up.message || down.message || 'Sync encountered an issue.';
+              showToast('Sync notice: ' + errMsg);
             }
           }
         } catch (e) {
           showToast('Drive sync error: ' + e);
         } finally {
           await fetchDriveStatus();
+          await fetchRolls();
         }
       });
     }

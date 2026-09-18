@@ -7,7 +7,7 @@ alongside GPS files so feedback is immediately captured and shareable.
 import json
 import os
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 
 class NotesManager:
@@ -32,11 +32,17 @@ class NotesManager:
         driver_name: str,
         buggy_name: str,
         general_notes: str,
-        segment_notes: Optional[Dict[str, str]] = None
+        segment_notes: Optional[Dict[str, str]] = None,
+        gps_files: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Save driver notes in both JSON and human-readable TXT format."""
         json_path, txt_path = self._get_paths(roll_id)
         now_str = datetime.now().isoformat()
+
+        # If gps_files not provided, preserve any previously recorded gps_files
+        if gps_files is None:
+            existing = self.get_notes(roll_id)
+            gps_files = existing.get("gps_files", [])
 
         note_data = {
             "roll_id": roll_id,
@@ -44,7 +50,8 @@ class NotesManager:
             "buggy_name": buggy_name or "Apex Buggy",
             "saved_at": now_str,
             "general_notes": general_notes or "",
-            "segment_notes": segment_notes or {}
+            "segment_notes": segment_notes or {},
+            "gps_files": [os.path.basename(f) for f in gps_files] if gps_files else []
         }
 
         # Save JSON
@@ -57,7 +64,10 @@ class NotesManager:
             f.write(f"Roll ID: {roll_id}\n")
             f.write(f"Date/Time: {now_str}\n")
             f.write(f"Driver: {note_data['driver_name']}\n")
-            f.write(f"Buggy: {note_data['buggy_name']}\n\n")
+            f.write(f"Buggy: {note_data['buggy_name']}\n")
+            if note_data["gps_files"]:
+                f.write(f"GPS File(s): {', '.join(note_data['gps_files'])}\n")
+            f.write("\n")
             f.write(f"--- GENERAL NOTES ---\n")
             f.write(f"{general_notes.strip() if general_notes else '(No general notes)'}\n\n")
 
@@ -71,15 +81,33 @@ class NotesManager:
 
     def get_notes(self, roll_id: str) -> Dict[str, Any]:
         """Load driver notes for a roll, or empty template if none exist."""
+        clean_id = roll_id.replace(":", "-").replace("/", "_")
         json_path, _ = self._get_paths(roll_id)
+        
+        # Check standard {clean_id}_notes.json first
         if os.path.exists(json_path):
             with open(json_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                data.setdefault("gps_files", [])
+                return data
+
+        # Fallback to legacy {clean_id}.json if present
+        legacy_json = os.path.join(self.notes_dir, f"{clean_id}.json")
+        if os.path.exists(legacy_json):
+            try:
+                with open(legacy_json, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    data.setdefault("gps_files", [])
+                    return data
+            except Exception:
+                pass
+
         return {
             "roll_id": roll_id,
             "driver_name": "",
             "buggy_name": "Apex Buggy",
             "saved_at": None,
             "general_notes": "",
-            "segment_notes": {}
+            "segment_notes": {},
+            "gps_files": []
         }
