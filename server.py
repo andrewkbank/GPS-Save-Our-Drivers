@@ -312,9 +312,10 @@ def api_compare():
     r2_segmented = segmenter.segment_roll(r2["fused_roll"])
 
     if seg_id == "full":
-        # Full roll comparison
-        r1_records = r1["fused_roll"]["records"]
-        r2_records = r2["fused_roll"]["records"]
+        # Use gate-cropped course records (first gate → last gate) so the map
+        # and chart only display the in-course portion of the GPS trace.
+        r1_records = r1_segmented.get("course_records") or r1["fused_roll"]["records"]
+        r2_records = r2_segmented.get("course_records") or r2["fused_roll"]["records"]
         metrics1 = {
             "entry_speed_mph": r1_records[0]["speed_mph"] if r1_records else 0,
             "min_speed_mph": min((r["speed_mph"] for r in r1_records), default=0),

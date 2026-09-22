@@ -46,26 +46,33 @@ class CourseSegmenter:
 
         segmented_results: Dict[str, Dict[str, Any]] = {}
         curr_search_idx = 0
+        course_start_idx: Optional[int] = None  # index of first gate crossing across all segments
+        course_end_idx: int = 0                  # index of last gate crossing across all segments
 
         for seg in self.segments:
             seg_id = seg["id"]
             start_gate = seg["start_gate"]
             end_gate = seg["end_gate"]
 
-            # Find closest record index to start_gate from curr_search_idx
-            start_idx = self._find_closest_gate(records, start_gate, start_from=curr_search_idx)
-            
-            # Find closest record index to end_gate after start_idx
+            # Find the first GPS record where the track crosses the start gate (finite)
+            start_idx = self._find_gate_crossing(records, start_gate, start_from=curr_search_idx)
+
+            # Find the first GPS record where the track crosses the end gate after start
             search_end_from = max(start_idx + 1, curr_search_idx + 1)
-            end_idx = self._find_closest_gate(records, end_gate, start_from=search_end_from)
+            end_idx = self._find_gate_crossing(records, end_gate, start_from=search_end_from)
 
             if end_idx <= start_idx or (end_idx - start_idx) < 1:
-                # If forward search failed, try global search as fallback
-                start_idx = self._find_closest_gate(records, start_gate, start_from=0)
-                end_idx = self._find_closest_gate(records, end_gate, start_from=start_idx + 1)
+                # If forward search failed, retry with global search as fallback
+                start_idx = self._find_gate_crossing(records, start_gate, start_from=0)
+                end_idx = self._find_gate_crossing(records, end_gate, start_from=start_idx + 1)
 
             if end_idx <= start_idx:
                 continue
+
+            # Track the outermost crossing indices for the full-course crop
+            if course_start_idx is None:
+                course_start_idx = start_idx
+            course_end_idx = max(course_end_idx, end_idx)
 
             # Update search cursor for subsequent segments
             curr_search_idx = max(curr_search_idx, start_idx)
@@ -93,7 +100,7 @@ class CourseSegmenter:
             # Check if segment defines a dedicated apex gate
             apex_gate = seg.get("apex_gate")
             if apex_gate:
-                rel_apex_idx = self._find_closest_gate(slice_records, apex_gate, start_from=0)
+                rel_apex_idx = self._find_gate_crossing(slice_records, apex_gate, start_from=0)
                 v_apex = slice_records[rel_apex_idx]["speed_mph"]
             else:
                 v_apex = v_min
@@ -129,20 +136,126 @@ class CourseSegmenter:
                 "records": seg_rebased_records
             }
 
+        # Build a cropped, re-zeroed slice spanning first gate → last gate.
+        # Falls back to the full records if no gate was ever crossed.
+        if course_start_idx is not None and course_end_idx > course_start_idx:
+            course_slice = records[course_start_idx: course_end_idx + 1]
+            base_dist  = course_slice[0]["cum_dist_m"]
+            base_time  = course_slice[0]["elapsed_sec"]
+            course_records = []
+            for r in course_slice:
+                rc = dict(r)
+                rc["seg_dist_m"]  = round(r["cum_dist_m"]  - base_dist, 2)
+                rc["seg_time_sec"] = round(r["elapsed_sec"] - base_time, 2)
+                course_records.append(rc)
+        else:
+            course_records = records  # no gate crossed → show everything
+
         return {
             "roll_id": roll_data.get("roll_id", "unknown"),
-            "segments": segmented_results
+            "segments": segmented_results,
+            "course_records": course_records
         }
 
-    def _find_closest_gate(self, records: List[Dict[str, Any]], gate: Dict[str, Any], start_from: int = 0) -> int:
-        """Find the index of the GPS record closest to the gate (using midpoint or gate line)."""
+    @staticmethod
+    def _segments_intersect(
+        p1_lat: float, p1_lon: float,
+        p2_lat: float, p2_lon: float,
+        q1_lat: float, q1_lon: float,
+        q2_lat: float, q2_lon: float,
+    ) -> bool:
+        """
+        Return True if the FINITE line segment p1→p2 (GPS track step) crosses
+        the FINITE line segment q1→q2 (gate line).
+
+        Uses the signed-area / cross-product test.  Lat/lon are treated as flat
+        2-D coordinates — valid for the short distances involved here.
+        """
+        def cross(ax, ay, bx, by, cx, cy) -> float:
+            """Signed area of triangle (A,B,C)."""
+            return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+
+        d1 = cross(q1_lat, q1_lon, q2_lat, q2_lon, p1_lat, p1_lon)
+        d2 = cross(q1_lat, q1_lon, q2_lat, q2_lon, p2_lat, p2_lon)
+        d3 = cross(p1_lat, p1_lon, p2_lat, p2_lon, q1_lat, q1_lon)
+        d4 = cross(p1_lat, p1_lon, p2_lat, p2_lon, q2_lat, q2_lon)
+
+        if ((d1 > 0 and d2 < 0) or (d1 < 0 and d2 > 0)) and \
+           ((d3 > 0 and d4 < 0) or (d3 < 0 and d4 > 0)):
+            return True
+
+        # Collinear / endpoint-touching cases — treat as a crossing
+        def on_segment(ax, ay, bx, by, cx, cy) -> bool:
+            return (min(ax, bx) <= cx <= max(ax, bx) and
+                    min(ay, by) <= cy <= max(ay, by))
+
+        if d1 == 0 and on_segment(q1_lat, q1_lon, q2_lat, q2_lon, p1_lat, p1_lon):
+            return True
+        if d2 == 0 and on_segment(q1_lat, q1_lon, q2_lat, q2_lon, p2_lat, p2_lon):
+            return True
+        if d3 == 0 and on_segment(p1_lat, p1_lon, p2_lat, p2_lon, q1_lat, q1_lon):
+            return True
+        if d4 == 0 and on_segment(p1_lat, p1_lon, p2_lat, p2_lon, q2_lat, q2_lon):
+            return True
+
+        return False
+
+    def _find_gate_crossing(
+        self,
+        records: List[Dict[str, Any]],
+        gate: Dict[str, Any],
+        start_from: int = 0,
+    ) -> int:
+        """
+        Return the index of the GPS record where the track first crosses the
+        *finite* gate line segment, searching from start_from onward.
+
+        The check is pair-wise: for each consecutive pair (records[i], records[i+1])
+        the track micro-segment is tested against the gate line.  The index
+        returned is i+1 (the record just after the crossing).
+
+        Falls back to closest-point if no finite crossing is found (e.g. short
+        or noisy track that never cleanly passes through the gate).
+        """
         if not records:
             return 0
         start_from = max(0, min(start_from, len(records) - 1))
-        
+
+        gate_line = gate.get("gate_line", [])
+        if len(gate_line) < 2:
+            # No gate line defined — fall back to closest point
+            return self._find_closest_point_to_gate(records, gate, start_from)
+
+        q1_lat = gate_line[0]["lat"]
+        q1_lon = gate_line[0]["lon"]
+        q2_lat = gate_line[1]["lat"]
+        q2_lon = gate_line[1]["lon"]
+
+        for i in range(start_from, len(records) - 1):
+            p1 = records[i]
+            p2 = records[i + 1]
+            if self._segments_intersect(
+                p1["lat"], p1["lon"],
+                p2["lat"], p2["lon"],
+                q1_lat, q1_lon,
+                q2_lat, q2_lon,
+            ):
+                return i + 1  # Record immediately after crossing
+
+        # Fallback: closest point to gate midpoint within search window
+        return self._find_closest_point_to_gate(records, gate, start_from)
+
+    def _find_closest_point_to_gate(
+        self,
+        records: List[Dict[str, Any]],
+        gate: Dict[str, Any],
+        start_from: int = 0,
+    ) -> int:
+        """Closest-point fallback: find the record nearest the gate midpoint."""
         gate_lat = gate.get("lat")
         gate_lon = gate.get("lon")
-        gate_line = gate.get("gate_line")
+        gate_line = gate.get("gate_line", [])
+        start_from = max(0, min(start_from, len(records) - 1))
 
         min_dist = float("inf")
         best_idx = start_from
@@ -150,7 +263,6 @@ class CourseSegmenter:
         for idx in range(start_from, len(records)):
             pt = records[idx]
             if gate_line and len(gate_line) >= 2:
-                # Minimum distance to gate line endpoints and midpoint
                 d1 = haversine_distance(pt["lat"], pt["lon"], gate_line[0]["lat"], gate_line[0]["lon"])
                 d2 = haversine_distance(pt["lat"], pt["lon"], gate_line[1]["lat"], gate_line[1]["lon"])
                 dm = haversine_distance(pt["lat"], pt["lon"], gate_lat, gate_lon)

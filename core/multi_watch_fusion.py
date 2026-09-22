@@ -18,6 +18,34 @@ from core.garmin_parser import haversine_distance, calculate_bearing
 class MultiWatchFusion:
     """Manages multi-watch roll detection and sensor fusion."""
 
+    # Hill 2 Drop start gate midpoint — used as the roll anchor for pairing watches.
+    # Two watches are considered the same roll if they cross this gate at nearly
+    # the same wall-clock time. Update if the first course gate ever moves.
+    _FIRST_GATE = {"lat": 40.440161, "lon": -79.942646}
+    _GATE_RADIUS_M = 30.0   # metres from gate centre to count as a crossing
+    _MAX_GATE_DELTA_SEC = 8.0   # max allowed difference in gate-crossing wall time
+
+    @staticmethod
+    def _find_gate_crossing_time(
+        records: List[Dict[str, Any]],
+        gate_lat: float,
+        gate_lon: float,
+        gate_radius_m: float,
+    ) -> Optional[datetime]:
+        """
+        Walk the GPS track and return the UTC timestamp of the first record
+        within gate_radius_m of the gate centre.  Returns None if the track
+        never passes through the gate.
+        """
+        for r in records:
+            d = haversine_distance(r["lat"], r["lon"], gate_lat, gate_lon)
+            if d <= gate_radius_m:
+                try:
+                    return datetime.fromisoformat(r["timestamp"])
+                except (KeyError, ValueError):
+                    return None
+        return None
+
     @staticmethod
     def are_same_roll(
         run_a: Dict[str, Any],
@@ -26,19 +54,51 @@ class MultiWatchFusion:
         max_mean_separation_m: float = 30.0
     ) -> bool:
         """
-        Determine if two parsed activity runs represent the same freeroll
-        by evaluating temporal overlap (GPS UTC) and spatial track proximity.
+        Determine if two parsed activity runs represent the same freeroll.
+
+        Primary check — gate anchor:
+            Both watches must cross the Hill 2 Drop start gate (the first timing
+            gate on the course) within _MAX_GATE_DELTA_SEC of each other.
+            This is immune to watches being started at different wall-clock times
+            because it measures *when the buggy passed the gate*, not when the
+            athlete pressed Start.
+
+        Fallback — temporal overlap + spatial proximity:
+            Used if either watch never passes through the first gate (e.g. a very
+            short test roll or a GPS file that begins after the gate).  In that
+            case the original overlap logic applies.
         """
+        gate = MultiWatchFusion._FIRST_GATE
+        gate_lat = gate["lat"]
+        gate_lon = gate["lon"]
+
+        t_gate_a = MultiWatchFusion._find_gate_crossing_time(
+            run_a.get("records", []), gate_lat, gate_lon,
+            MultiWatchFusion._GATE_RADIUS_M
+        )
+        t_gate_b = MultiWatchFusion._find_gate_crossing_time(
+            run_b.get("records", []), gate_lat, gate_lon,
+            MultiWatchFusion._GATE_RADIUS_M
+        )
+
+        if t_gate_a is not None and t_gate_b is not None:
+            # Both watches crossed the first gate — compare crossing times
+            gate_delta = abs((t_gate_a - t_gate_b).total_seconds())
+            return gate_delta <= MultiWatchFusion._MAX_GATE_DELTA_SEC
+
+        # ── Fallback: raw temporal-overlap + spatial proximity ────────────────
+        # Reached when one or both watches have no gate crossing (e.g. test roll,
+        # GPS started late, or gate coordinates haven't been updated yet).
         try:
             start_a = datetime.fromisoformat(run_a["start_time"])
-            end_a = datetime.fromisoformat(run_a["end_time"])
+            end_a   = datetime.fromisoformat(run_a["end_time"])
             start_b = datetime.fromisoformat(run_b["start_time"])
-            end_b = datetime.fromisoformat(run_b["end_time"])
+            end_b   = datetime.fromisoformat(run_b["end_time"])
         except (KeyError, ValueError):
             return False
 
-        overlap_start = max(start_a, start_b)
-        overlap_end = min(end_a, end_b)
+        overlap_start    = max(start_a, start_b)
+        overlap_end      = min(end_a, end_b)
         overlap_duration = (overlap_end - overlap_start).total_seconds()
 
         if overlap_duration < min_overlap_sec:
