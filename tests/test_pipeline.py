@@ -74,7 +74,6 @@ class TestBuggyTelemetryPipeline(unittest.TestCase):
         segments = segmented["segments"]
 
         self.assertIn("hill2_drop", segments)
-        self.assertIn("stop_sign_turn", segments)
         self.assertIn("monument_straight", segments)
         self.assertIn("chute_turn", segments)
         self.assertIn("chute_rollout", segments)

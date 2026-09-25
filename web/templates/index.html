@@ -101,84 +101,109 @@
       <!-- Generated dynamically by app.js -->
     </nav>
 
-    <!-- Actionable Metrics HUD Cards -->
-    <section class="metrics-grid">
-      <!-- 1. Entry Speed -->
-      <div class="metric-card">
-        <div class="metric-header">
-          <span class="metric-label">Entry Speed (v_in)</span>
-          <span class="metric-icon">🚀</span>
-        </div>
-        <div class="metric-val-row">
-          <span class="metric-val" id="val-entry-speed">--.-</span>
-          <span class="metric-unit">mph</span>
-        </div>
-        <div class="metric-delta delta-neutral" id="delta-entry-speed" style="display:none;"></div>
+    <!-- Bad GPS / Tree Coverage Notice -->
+    <div class="bad-gps-alert" id="bad-gps-alert" style="display: none;">
+      <span class="bad-gps-icon">🌲⚠️</span>
+      <div class="bad-gps-text">
+        <strong>Tree Coverage GPS Caution:</strong>
+        <span id="bad-gps-desc">This segment runs under dense tree canopy. GPS data may experience drift, elevation spikes, or signal dropouts.</span>
       </div>
+    </div>
 
-      <!-- 2. Apex / Min Speed -->
-      <div class="metric-card">
+    <!-- Actionable Metrics HUD Cards (3 Comparison Cards) -->
+    <section class="metrics-grid metrics-hud-trio">
+      <!-- 1. Average Speed Card -->
+      <div class="metric-card metric-card-interactive" id="card-avg-speed" role="button" tabindex="0" title="Click to replace graph with Speed & Time Profile">
         <div class="metric-header">
-          <span class="metric-label">Apex / Min Speed (v_min)</span>
-          <span class="metric-icon">🎯</span>
-        </div>
-        <div class="metric-val-row">
-          <span class="metric-val" id="val-apex-speed">--.-</span>
-          <span class="metric-unit">mph</span>
-        </div>
-        <div class="metric-delta delta-neutral" id="delta-apex-speed" style="display:none;"></div>
-      </div>
-
-      <!-- 3. Exit Speed -->
-      <div class="metric-card">
-        <div class="metric-header">
-          <span class="metric-label">Exit Speed (v_out)</span>
+          <div class="metric-label-group">
+            <span class="metric-label">Average Speed (v_avg)</span>
+            <span class="metric-action-tag">Click to Plot ↗</span>
+          </div>
           <span class="metric-icon">⚡</span>
         </div>
-        <div class="metric-val-row">
-          <span class="metric-val" id="val-exit-speed">--.-</span>
-          <span class="metric-unit">mph</span>
+        <div class="metric-comparison-body">
+          <div class="metric-stat-col primary">
+            <span class="metric-sublabel">Current Roll</span>
+            <div class="metric-val-row">
+              <span class="metric-val" id="val-avg-speed">--.-</span>
+              <span class="metric-unit">mph</span>
+            </div>
+          </div>
+          <div class="metric-stat-divider"></div>
+          <div class="metric-stat-col comparison">
+            <span class="metric-sublabel">Comparison Roll</span>
+            <div class="metric-val-row">
+              <span class="metric-val comp-val" id="val-comp-avg-speed">--.-</span>
+              <span class="metric-unit">mph</span>
+            </div>
+          </div>
         </div>
-        <div class="metric-delta delta-neutral" id="delta-exit-speed" style="display:none;"></div>
+        <div class="metric-footer-row">
+          <div class="metric-delta delta-neutral" id="delta-avg-speed" style="display:none;"></div>
+          <span class="chart-active-pill" id="pill-avg-speed" style="display: none;">Active Plot</span>
+        </div>
       </div>
 
-      <!-- 4. Delta Speed -->
-      <div class="metric-card">
+      <!-- 2. Traveled Distance Card -->
+      <div class="metric-card metric-card-interactive" id="card-distance" role="button" tabindex="0" title="Click to replace graph with Traveled Distance Progression">
         <div class="metric-header">
-          <span class="metric-label">Speed Held (Δv)</span>
-          <span class="metric-icon">📈</span>
-        </div>
-        <div class="metric-val-row">
-          <span class="metric-val" id="val-delta-v">--.-</span>
-          <span class="metric-unit">mph</span>
-        </div>
-        <span style="font-size: 11px; color: var(--text-dim);">Net carry across segment</span>
-      </div>
-
-      <!-- 5. Transit Time -->
-      <div class="metric-card">
-        <div class="metric-header">
-          <span class="metric-label">Transit Time (Δt)</span>
-          <span class="metric-icon">⏱️</span>
-        </div>
-        <div class="metric-val-row">
-          <span class="metric-val" id="val-transit-time">--.--</span>
-          <span class="metric-unit">sec</span>
-        </div>
-        <div class="metric-delta delta-neutral" id="delta-transit-time" style="display:none;"></div>
-      </div>
-
-      <!-- 6. Distance -->
-      <div class="metric-card">
-        <div class="metric-header">
-          <span class="metric-label">Traveled Distance</span>
+          <div class="metric-label-group">
+            <span class="metric-label">Traveled Distance (Δs)</span>
+            <span class="metric-action-tag">Click to Plot ↗</span>
+          </div>
           <span class="metric-icon">📏</span>
         </div>
-        <div class="metric-val-row">
-          <span class="metric-val" id="val-distance">---.-</span>
-          <span class="metric-unit">m</span>
+        <div class="metric-comparison-body">
+          <div class="metric-stat-col primary">
+            <span class="metric-sublabel">Current Roll</span>
+            <div class="metric-val-row">
+              <span class="metric-val" id="val-distance">---.-</span>
+              <span class="metric-unit">m</span>
+            </div>
+          </div>
+          <div class="metric-stat-divider"></div>
+          <div class="metric-stat-col comparison">
+            <span class="metric-sublabel">Comparison Roll</span>
+            <div class="metric-val-row">
+              <span class="metric-val comp-val" id="val-comp-distance">---.-</span>
+              <span class="metric-unit">m</span>
+            </div>
+          </div>
         </div>
-        <span style="font-size: 11px; color: var(--text-dim);">Path length efficiency</span>
+        <div class="metric-footer-row">
+          <div class="metric-delta delta-neutral" id="delta-distance" style="display:none;"></div>
+          <span class="chart-active-pill" id="pill-distance" style="display: none;">Active Plot</span>
+        </div>
+      </div>
+
+      <!-- 3. Segment Time Card (Comparison Only, No Plot Required) -->
+      <div class="metric-card" id="card-transit-time">
+        <div class="metric-header">
+          <div class="metric-label-group">
+            <span class="metric-label">Segment Time (Δt)</span>
+          </div>
+          <span class="metric-icon">⏱️</span>
+        </div>
+        <div class="metric-comparison-body">
+          <div class="metric-stat-col primary">
+            <span class="metric-sublabel">Current Roll</span>
+            <div class="metric-val-row">
+              <span class="metric-val" id="val-transit-time">--.--</span>
+              <span class="metric-unit">sec</span>
+            </div>
+          </div>
+          <div class="metric-stat-divider"></div>
+          <div class="metric-stat-col comparison">
+            <span class="metric-sublabel">Comparison Roll</span>
+            <div class="metric-val-row">
+              <span class="metric-val comp-val" id="val-comp-transit-time">--.--</span>
+              <span class="metric-unit">sec</span>
+            </div>
+          </div>
+        </div>
+        <div class="metric-footer-row">
+          <div class="metric-delta delta-neutral" id="delta-transit-time" style="display:none;"></div>
+        </div>
       </div>
     </section>
 
@@ -187,12 +212,17 @@
       <!-- Left: Interactive Telemetry Chart -->
       <div class="chart-card">
         <div class="card-title-row">
-          <h2 class="card-title">
-            <span>📊</span> Segment Velocity Profile (v vs. Track Distance)
-          </h2>
-          <span style="font-size: 12px; color: var(--text-muted);">
-            Red = Current Roll | Amber = Comparison Roll
-          </span>
+          <div class="chart-title-group">
+            <h2 class="card-title" id="chart-title">
+              <span>📊</span> Segment Velocity Profile (v vs. Track Distance)
+            </h2>
+            <span id="chart-subtitle" style="font-size: 12px; color: var(--text-muted); display: block; margin-top: 3px;">
+              Red = Current Roll | Amber = Comparison Roll • Hover map to sync crosshair
+            </span>
+          </div>
+          <button class="btn btn-chart-reset" id="btn-reset-chart" style="display: none;" title="Return to standard Segment Velocity Profile">
+            <span>⟲</span> Velocity Profile
+          </button>
         </div>
         <div class="chart-container">
           <canvas id="telemetry-canvas"></canvas>

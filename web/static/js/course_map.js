@@ -61,13 +61,13 @@ class CourseMap {
 
     const drawnGateKeys = new Set();
 
-    const drawGate = (gate, color) => {
+    const drawGate = (gate, color, suffix = '') => {
       if (!gate) return;
       const key = `${gate.lat.toFixed(5)}_${gate.lon.toFixed(5)}`;
       if (drawnGateKeys.has(key)) return;
       drawnGateKeys.add(key);
 
-      const name = gate.name || 'Gate Checkpoint';
+      const name = (gate.name || 'Gate Checkpoint') + suffix;
       const gateLine = gate.gate_line;
 
       if (gateLine && gateLine.length >= 2) {
@@ -98,11 +98,12 @@ class CourseMap {
     };
 
     this.segmentsMeta.forEach(seg => {
-      drawGate(seg.start_gate, seg.color);
+      const suffix = seg.bad_gps ? ' [🌲 Tree Cover]' : '';
+      drawGate(seg.start_gate, seg.color, suffix);
       if (seg.apex_gate) {
-        drawGate(seg.apex_gate, '#f43f5e');
+        drawGate(seg.apex_gate, '#f43f5e', suffix);
       }
-      drawGate(seg.end_gate, seg.color);
+      drawGate(seg.end_gate, seg.color, suffix);
     });
   }
 

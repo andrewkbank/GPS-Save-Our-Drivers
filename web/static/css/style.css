@@ -349,6 +349,44 @@ body {
   display: inline-block;
 }
 
+.segment-btn.seg-bad-gps {
+  border-style: dashed;
+}
+
+.seg-warning-badge {
+  font-size: 11px;
+  margin-left: 2px;
+}
+
+/* ================= Bad GPS Alert Banner ================= */
+.bad-gps-alert {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-md);
+  padding: 10px 16px;
+  color: #fbbf24;
+  font-size: 13px;
+  animation: fadeIn 0.25s ease-out;
+}
+
+.bad-gps-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.bad-gps-text {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.bad-gps-text strong {
+  color: #fde68a;
+  margin-right: 6px;
+}
+
 /* ================= Metrics HUD Cards ================= */
 .metrics-grid {
   display: grid;
@@ -356,21 +394,70 @@ body {
   gap: 14px;
 }
 
+.metrics-hud-duo {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.metrics-hud-trio {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+@media (max-width: 950px) {
+  .metrics-hud-trio {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .metrics-hud-duo {
+    grid-template-columns: 1fr;
+  }
+}
+
 .metric-card {
   background-color: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  padding: 16px;
+  padding: 16px 20px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
   box-shadow: var(--shadow-card);
-  transition: transform 0.2s, border-color 0.2s;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
 }
 
-.metric-card:hover {
-  border-color: rgba(255, 45, 45, 0.45);
-  transform: translateY(-2px);
+.metric-card-interactive {
+  cursor: pointer;
+  user-select: none;
+}
+
+.metric-card-interactive:hover {
+  border-color: rgba(255, 45, 45, 0.55);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.metric-card-interactive:active {
+  transform: translateY(-1px);
+}
+
+.metric-card-interactive.active-card {
+  border-color: var(--accent-red);
+  background: linear-gradient(145deg, rgba(255, 45, 45, 0.12) 0%, var(--bg-card) 70%);
+  box-shadow: 0 0 20px rgba(255, 45, 45, 0.25), 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.metric-card-interactive.active-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--accent-red);
+  box-shadow: 0 0 8px var(--accent-red);
 }
 
 .metric-header {
@@ -379,12 +466,73 @@ body {
   justify-content: space-between;
 }
 
+.metric-label-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .metric-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.8px;
   color: var(--text-muted);
+}
+
+.metric-action-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 7px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.metric-card-interactive:hover .metric-action-tag {
+  color: var(--accent-red);
+  background: rgba(255, 45, 45, 0.1);
+}
+
+.metric-comparison-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+}
+
+.metric-stat-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.metric-sublabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.metric-stat-col.primary .metric-sublabel {
+  color: #ff6b6b;
+}
+
+.metric-stat-col.comparison .metric-sublabel {
+  color: #fbbf24;
+}
+
+.metric-stat-divider {
+  width: 1px;
+  height: 38px;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .metric-val-row {
@@ -394,10 +542,15 @@ body {
 }
 
 .metric-val {
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   color: #ffffff;
+}
+
+.metric-val.comp-val {
+  font-size: 24px;
+  color: #e5e7eb;
 }
 
 .metric-unit {
@@ -406,30 +559,78 @@ body {
   color: var(--text-dim);
 }
 
+.metric-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .metric-delta {
   font-size: 12px;
   font-weight: 700;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 5px;
   width: fit-content;
 }
 
 .delta-faster {
   color: var(--accent-green);
-  background: rgba(16, 185, 129, 0.1);
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
 }
 
 .delta-slower {
   color: var(--accent-red);
-  background: rgba(239, 68, 68, 0.1);
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.25);
 }
 
 .delta-neutral {
   color: var(--text-dim);
-  background: rgba(107, 114, 128, 0.1);
+  background: rgba(107, 114, 128, 0.12);
+  border: 1px solid rgba(107, 114, 128, 0.25);
+}
+
+.chart-active-pill {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #ffffff;
+  background: var(--accent-red);
+  padding: 3px 8px;
+  border-radius: 12px;
+  box-shadow: 0 0 10px rgba(255, 45, 45, 0.6);
+  animation: pulsePill 2s infinite ease-in-out;
+}
+
+@keyframes pulsePill {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.03); }
+}
+
+.btn-chart-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 45, 45, 0.12);
+  border: 1px solid var(--accent-red);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-chart-reset:hover {
+  background: var(--accent-red);
+  box-shadow: 0 0 10px rgba(255, 45, 45, 0.4);
 }
 
 /* ================= Telemetry and Map Split ================= */

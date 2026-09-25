@@ -316,12 +316,15 @@ def api_compare():
         # and chart only display the in-course portion of the GPS trace.
         r1_records = r1_segmented.get("course_records") or r1["fused_roll"]["records"]
         r2_records = r2_segmented.get("course_records") or r2["fused_roll"]["records"]
+        v_avg_1 = sum(r["speed_mph"] for r in r1_records) / len(r1_records) if r1_records else 0.0
+        v_avg_2 = sum(r["speed_mph"] for r in r2_records) / len(r2_records) if r2_records else 0.0
         metrics1 = {
             "entry_speed_mph": r1_records[0]["speed_mph"] if r1_records else 0,
             "min_speed_mph": min((r["speed_mph"] for r in r1_records), default=0),
             "apex_speed_mph": min((r["speed_mph"] for r in r1_records), default=0),
             "exit_speed_mph": r1_records[-1]["speed_mph"] if r1_records else 0,
             "max_speed_mph": r1["max_speed_mph"],
+            "avg_speed_mph": round(v_avg_1, 2),
             "transit_time_sec": r1["duration_sec"],
             "distance_m": r1["total_dist_m"]
         }
@@ -331,6 +334,7 @@ def api_compare():
             "apex_speed_mph": min((r["speed_mph"] for r in r2_records), default=0),
             "exit_speed_mph": r2_records[-1]["speed_mph"] if r2_records else 0,
             "max_speed_mph": r2["max_speed_mph"],
+            "avg_speed_mph": round(v_avg_2, 2),
             "transit_time_sec": r2["duration_sec"],
             "distance_m": r2["total_dist_m"]
         }
@@ -349,12 +353,13 @@ def api_compare():
 
     # Calculate actionable deltas (Roll 2 vs Roll 1)
     deltas = {
-        "delta_entry_speed_mph": round(metrics2["entry_speed_mph"] - metrics1["entry_speed_mph"], 2),
-        "delta_min_speed_mph": round(metrics2["min_speed_mph"] - metrics1["min_speed_mph"], 2),
-        "delta_apex_speed_mph": round(metrics2["apex_speed_mph"] - metrics1["apex_speed_mph"], 2),
-        "delta_exit_speed_mph": round(metrics2["exit_speed_mph"] - metrics1["exit_speed_mph"], 2),
-        "delta_transit_time_sec": round(metrics2["transit_time_sec"] - metrics1["transit_time_sec"], 2),
-        "delta_distance_m": round(metrics2["distance_m"] - metrics1["distance_m"], 2)
+        "delta_entry_speed_mph": round(metrics2.get("entry_speed_mph", 0) - metrics1.get("entry_speed_mph", 0), 2),
+        "delta_min_speed_mph": round(metrics2.get("min_speed_mph", 0) - metrics1.get("min_speed_mph", 0), 2),
+        "delta_apex_speed_mph": round(metrics2.get("apex_speed_mph", 0) - metrics1.get("apex_speed_mph", 0), 2),
+        "delta_exit_speed_mph": round(metrics2.get("exit_speed_mph", 0) - metrics1.get("exit_speed_mph", 0), 2),
+        "delta_avg_speed_mph": round(metrics2.get("avg_speed_mph", 0) - metrics1.get("avg_speed_mph", 0), 2),
+        "delta_transit_time_sec": round(metrics2.get("transit_time_sec", 0) - metrics1.get("transit_time_sec", 0), 2),
+        "delta_distance_m": round(metrics2.get("distance_m", 0) - metrics1.get("distance_m", 0), 2)
     }
 
     return jsonify({

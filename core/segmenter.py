@@ -118,6 +118,7 @@ class CourseSegmenter:
                 "name": seg["name"],
                 "description": seg["description"],
                 "color": seg["color"],
+                "bad_gps": seg.get("bad_gps", False),
                 "metrics": {
                     "entry_speed_mph": round(v_in, 2),
                     "min_speed_mph": round(v_min, 2),

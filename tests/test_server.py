@@ -43,7 +43,11 @@ def test_server():
         with urllib.request.urlopen(url_comp) as r:
             comp_data = json.loads(r.read().decode("utf-8"))
             deltas = comp_data["deltas"]
+            assert "delta_avg_speed_mph" in deltas, "Expected delta_avg_speed_mph in deltas"
+            assert "delta_distance_m" in deltas, "Expected delta_distance_m in deltas"
             print(f"[PASS] Compare API OK for The Chute:")
+            print(f"       Delta Avg Speed: {deltas['delta_avg_speed_mph']} mph")
+            print(f"       Delta Distance: {deltas['delta_distance_m']} m")
             print(f"       Delta Entry Speed: {deltas['delta_entry_speed_mph']} mph")
             print(f"       Delta Min/Apex Speed: {deltas['delta_min_speed_mph']} mph")
             print(f"       Delta Exit Speed: {deltas['delta_exit_speed_mph']} mph")

@@ -49,18 +49,33 @@ document.addEventListener('DOMContentLoaded', () => {
   const debugGpsFiles = document.getElementById('debug-gps-files');
   const debugNotesFiles = document.getElementById('debug-notes-files');
 
-  // Metric HUD Elements
-  const valEntry = document.getElementById('val-entry-speed');
-  const valApex = document.getElementById('val-apex-speed');
-  const valExit = document.getElementById('val-exit-speed');
-  const valDeltaV = document.getElementById('val-delta-v');
-  const valTime = document.getElementById('val-transit-time');
-  const valDist = document.getElementById('val-distance');
+  // Metric HUD Elements (2-card focused comparison)
+  const cardAvgSpeed = document.getElementById('card-avg-speed');
+  const cardDistance = document.getElementById('card-distance');
+  const valAvgSpeed = document.getElementById('val-avg-speed');
+  const valCompAvgSpeed = document.getElementById('val-comp-avg-speed');
+  const deltaAvgSpeed = document.getElementById('delta-avg-speed');
+  const pillAvgSpeed = document.getElementById('pill-avg-speed');
 
-  const deltaEntry = document.getElementById('delta-entry-speed');
-  const deltaApex = document.getElementById('delta-apex-speed');
-  const deltaExit = document.getElementById('delta-exit-speed');
+  const valDist = document.getElementById('val-distance');
+  const valCompDist = document.getElementById('val-comp-distance');
+  const deltaDist = document.getElementById('delta-distance');
+  const pillDistance = document.getElementById('pill-distance');
+
+  const valTime = document.getElementById('val-transit-time');
+  const valCompTime = document.getElementById('val-comp-transit-time');
   const deltaTime = document.getElementById('delta-transit-time');
+
+  // Bad GPS Notice Elements
+  const badGpsAlert = document.getElementById('bad-gps-alert');
+  const badGpsDesc = document.getElementById('bad-gps-desc');
+
+  // Chart Header Elements
+  const chartTitle = document.getElementById('chart-title');
+  const chartSubtitle = document.getElementById('chart-subtitle');
+  const btnResetChart = document.getElementById('btn-reset-chart');
+
+  let currentChartMode = 'velocity_profile';
 
   // Toast notifier
   function showToast(msg) {
@@ -228,8 +243,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     segmentsMeta.forEach(seg => {
       const btn = document.createElement('button');
-      btn.className = `segment-btn ${activeSegmentId === seg.id ? 'active' : ''}`;
-      btn.innerHTML = `<span class="dot" style="background-color: ${seg.color}"></span> ${seg.name}`;
+      btn.className = `segment-btn ${activeSegmentId === seg.id ? 'active' : ''} ${seg.bad_gps ? 'seg-bad-gps' : ''}`;
+      const badGpsIcon = seg.bad_gps ? `<span class="seg-warning-badge" title="Known Tree Coverage (GPS degraded)">⚠️ 🌲</span>` : '';
+      btn.innerHTML = `<span class="dot" style="background-color: ${seg.color}"></span> ${seg.name} ${badGpsIcon}`;
       btn.addEventListener('click', () => selectSegment(seg.id));
       segmentBar.appendChild(btn);
     });
@@ -240,6 +256,20 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.segment-btn').forEach(btn => btn.classList.remove('active'));
     renderSegmentButtons();
     updateSegmentNotesInput();
+
+    // Bad GPS alert handling
+    const curSeg = segmentsMeta.find(s => s.id === segId);
+    if (curSeg && curSeg.bad_gps) {
+      if (badGpsAlert) {
+        badGpsAlert.style.display = 'flex';
+        if (badGpsDesc) {
+          badGpsDesc.textContent = `${curSeg.name}: ${curSeg.description || 'Pusher / rollout under dense tree canopy. GPS signal may experience drift, elevation spikes, or signal dropouts.'}`;
+        }
+      }
+    } else {
+      if (badGpsAlert) badGpsAlert.style.display = 'none';
+    }
+
     updateComparisonView();
   }
 
@@ -251,6 +281,38 @@ document.addEventListener('DOMContentLoaded', () => {
     if (label) {
       const segName = activeSegmentId === 'full' ? 'Full Roll' : (segmentsMeta.find(s => s.id === activeSegmentId)?.name || activeSegmentId);
       label.textContent = `Notes for [${segName}]`;
+    }
+  }
+
+  function setChartMode(mode) {
+    currentChartMode = mode;
+    telemetryChart.setViewMode(mode);
+
+    if (cardAvgSpeed) cardAvgSpeed.classList.toggle('active-card', mode === 'average_speed');
+    if (cardDistance) cardDistance.classList.toggle('active-card', mode === 'traveled_distance');
+    if (pillAvgSpeed) pillAvgSpeed.style.display = (mode === 'average_speed' ? 'inline-block' : 'none');
+    if (pillDistance) pillDistance.style.display = (mode === 'traveled_distance' ? 'inline-block' : 'none');
+    if (btnResetChart) btnResetChart.style.display = (mode !== 'velocity_profile' ? 'inline-flex' : 'none');
+
+    if (chartTitle && chartSubtitle) {
+      if (mode === 'velocity_profile') {
+        chartTitle.innerHTML = '<span>📊</span> Segment Velocity Profile (v vs. Track Distance)';
+        chartSubtitle.textContent = 'Red = Current Roll | Amber = Comparison Roll • Hover map to sync crosshair';
+      } else if (mode === 'average_speed') {
+        chartTitle.innerHTML = '<span>⚡</span> Speed & Time Profile (v vs. Elapsed Time)';
+        chartSubtitle.textContent = 'Includes average speed benchmark lines • Red = Current Roll | Amber = Comparison Roll';
+      } else if (mode === 'traveled_distance') {
+        chartTitle.innerHTML = '<span>📏</span> Traveled Distance Progression (Distance vs. Time)';
+        chartSubtitle.textContent = 'Compares path length accumulation • Steeper curve indicates higher ground speed';
+      }
+    }
+  }
+
+  function toggleChartMode(mode) {
+    if (currentChartMode === mode) {
+      setChartMode('velocity_profile');
+    } else {
+      setChartMode(mode);
     }
   }
 
@@ -266,20 +328,38 @@ document.addEventListener('DOMContentLoaded', () => {
       const rollCompare = compareRollId ? data.roll1 : null; // Comparison roll
       const deltas = data.deltas;
 
-      // Update HUD Metrics
+      // Update HUD Metrics (2 cards: Average Speed & Traveled Distance)
       const m = rollPrimary.metrics;
-      valEntry.textContent = m.entry_speed_mph.toFixed(1);
-      valApex.textContent = m.min_speed_mph.toFixed(1);
-      valExit.textContent = m.exit_speed_mph.toFixed(1);
-      valDeltaV.textContent = (m.exit_speed_mph - m.entry_speed_mph >= 0 ? '+' : '') + (m.exit_speed_mph - m.entry_speed_mph).toFixed(1);
-      valTime.textContent = m.transit_time_sec.toFixed(2);
-      valDist.textContent = m.distance_m.toFixed(1);
+      const mComp = rollCompare ? rollCompare.metrics : null;
+
+      // 1. Average Speed
+      if (valAvgSpeed) {
+        valAvgSpeed.textContent = (m.avg_speed_mph !== undefined) ? m.avg_speed_mph.toFixed(1) : '--.-';
+      }
+      if (valCompAvgSpeed) {
+        valCompAvgSpeed.textContent = (mComp && mComp.avg_speed_mph !== undefined) ? mComp.avg_speed_mph.toFixed(1) : '--.-';
+      }
+
+      // 2. Traveled Distance
+      if (valDist) {
+        valDist.textContent = (m.distance_m !== undefined) ? m.distance_m.toFixed(1) : '---.-';
+      }
+      if (valCompDist) {
+        valCompDist.textContent = (mComp && mComp.distance_m !== undefined) ? mComp.distance_m.toFixed(1) : '---.-';
+      }
+
+      // 3. Segment Time
+      if (valTime) {
+        valTime.textContent = (m.transit_time_sec !== undefined) ? m.transit_time_sec.toFixed(2) : '--.--';
+      }
+      if (valCompTime) {
+        valCompTime.textContent = (mComp && mComp.transit_time_sec !== undefined) ? mComp.transit_time_sec.toFixed(2) : '--.--';
+      }
 
       // Render Deltas if comparison exists
-      if (rollCompare) {
-        renderDeltaBadge(deltaEntry, deltas.delta_entry_speed_mph, 'mph', true);
-        renderDeltaBadge(deltaApex, deltas.delta_min_speed_mph, 'mph', true);
-        renderDeltaBadge(deltaExit, deltas.delta_exit_speed_mph, 'mph', true);
+      if (rollCompare && deltas) {
+        renderDeltaBadge(deltaAvgSpeed, deltas.delta_avg_speed_mph, 'mph', true);
+        renderDeltaBadge(deltaDist, deltas.delta_distance_m, 'm', false); // lower distance is tighter line
         renderDeltaBadge(deltaTime, deltas.delta_transit_time_sec, 's', false); // lower time is faster!
       } else {
         clearDeltaBadges();
@@ -295,6 +375,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderDeltaBadge(elem, deltaVal, unit, higherIsBetter) {
+    if (!elem) return;
+    if (deltaVal === undefined || deltaVal === null || isNaN(deltaVal)) {
+      elem.style.display = 'none';
+      return;
+    }
     elem.style.display = 'inline-flex';
     const isPositive = deltaVal > 0;
     const isGood = higherIsBetter ? isPositive : !isPositive;
@@ -305,10 +390,37 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function clearDeltaBadges() {
-    [deltaEntry, deltaApex, deltaExit, deltaTime].forEach(el => el.style.display = 'none');
+    if (deltaAvgSpeed) deltaAvgSpeed.style.display = 'none';
+    if (deltaDist) deltaDist.style.display = 'none';
+    if (deltaTime) deltaTime.style.display = 'none';
   }
 
   function setupEventListeners() {
+    // HUD Cards click-to-graph interactions
+    if (cardAvgSpeed) {
+      cardAvgSpeed.addEventListener('click', () => toggleChartMode('average_speed'));
+      cardAvgSpeed.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleChartMode('average_speed');
+        }
+      });
+    }
+
+    if (cardDistance) {
+      cardDistance.addEventListener('click', () => toggleChartMode('traveled_distance'));
+      cardDistance.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleChartMode('traveled_distance');
+        }
+      });
+    }
+
+    if (btnResetChart) {
+      btnResetChart.addEventListener('click', () => setChartMode('velocity_profile'));
+    }
+
     primarySelect.addEventListener('change', async (e) => {
       currentRollId = e.target.value;
       await loadRollDetail(currentRollId);

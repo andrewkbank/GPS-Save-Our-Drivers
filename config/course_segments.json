@@ -8,7 +8,8 @@
     {
       "id": "hill2_drop",
       "name": "Hill 2 Drop",
-      "description": "Pusher release at End of Hill 2 accelerating down Schenley Drive slope",
+      "description": "Pusher release at End of Hill 2 accelerating down Schenley Drive slope. Bad GPS due to the Tree Coverage",
+      "bad_gps": true,
       "color": "#3b82f6",
       "start_gate": {
         "name": "End of Hill 2",
@@ -20,53 +21,29 @@
         ]
       },
       "end_gate": {
-        "name": "Start of Stop Sign Turn",
-        "lat": 40.438691,
-        "lon": -79.945372,
+        "name": "Stop Sign",
+        "lat": 40.439063613382935,
+        "lon": -79.94638218792248,
         "gate_line": [
-          {"lat": 40.43897650482764, "lon": -79.94528381134245},
-          {"lat": 40.438404904285974, "lon": -79.9454594960136}
+          {"lat": 40.439226787656885, "lon": -79.9460448218266},
+          {"lat": 40.43888382919184, "lon": -79.94692995079092}
         ]
       },
       "target_distance_m": 295
     },
     {
-      "id": "stop_sign_turn",
-      "name": "Stop Sign Turn",
-      "description": "Right curve sweeping around Westinghouse Pond past the stop sign",
-      "color": "#f59e0b",
-      "start_gate": {
-        "name": "Start of Stop Sign Turn",
-        "lat": 40.438691,
-        "lon": -79.945372,
-        "gate_line": [
-          {"lat": 40.43897650482764, "lon": -79.94528381134245},
-          {"lat": 40.438404904285974, "lon": -79.9454594960136}
-        ]
-      },
-      "end_gate": {
-        "name": "End of Stop Sign Turn",
-        "lat": 40.439258,
-        "lon": -79.946624,
-        "gate_line": [
-          {"lat": 40.43938274655227, "lon": -79.94624806550232},
-          {"lat": 40.439132673424375, "lon": -79.94699908394387}
-        ]
-      },
-      "target_distance_m": 93
-    },
-    {
       "id": "monument_straight",
       "name": "Monument Straightaway",
       "description": "Fast straightaway past George Westinghouse Memorial settling into peak speed",
+      "bad_gps": false,
       "color": "#10b981",
       "start_gate": {
-        "name": "End of Stop Sign Turn",
-        "lat": 40.439258,
-        "lon": -79.946624,
+        "name": "Stop Sign",
+        "lat": 40.439063613382935,
+        "lon": -79.94638218792248,
         "gate_line": [
-          {"lat": 40.43938274655227, "lon": -79.94624806550232},
-          {"lat": 40.439132673424375, "lon": -79.94699908394387}
+          {"lat": 40.439226787656885, "lon": -79.9460448218266},
+          {"lat": 40.43888382919184, "lon": -79.94692995079092}
         ]
       },
       "end_gate": {
@@ -84,6 +61,7 @@
       "id": "chute_turn",
       "name": "The Chute",
       "description": "High-speed entry, apex sweep, and sharp right turn onto Frew Street",
+      "bad_gps": false,
       "color": "#ef4444",
       "start_gate": {
         "name": "Start of Chute Entry",
@@ -108,7 +86,8 @@
     {
       "id": "chute_rollout",
       "name": "Chute Exit & Hill 3 Rollout",
-      "description": "Carrying momentum along Frew Street towards the Hill 3 pickup line",
+      "description": "Carrying momentum along Frew Street towards the Hill 3 pickup line. Can have bad GPS due to tree coverage.",
+      "bad_gps": true,
       "color": "#8b5cf6",
       "start_gate": {
         "name": "Chute Exit",
