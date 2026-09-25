@@ -153,6 +153,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function formatRollTime(sec) {
+    if (sec === undefined || sec === null || isNaN(sec) || sec <= 0) return '--:--';
+    const mins = Math.floor(sec / 60);
+    const remSec = (sec % 60).toFixed(2);
+    const remStr = (sec % 60 < 10 ? '0' : '') + remSec;
+    return `${mins}:${remStr}`;
+  }
+
   function formatRollLabel(r) {
     const driver = (r.driver_name && r.driver_name !== 'Unknown Driver') ? r.driver_name.trim() : '';
     const buggy = (r.buggy_name && r.buggy_name !== 'Apex Buggy') ? r.buggy_name.trim() : (r.buggy_name ? r.buggy_name.trim() : '');
@@ -166,7 +174,10 @@ document.addEventListener('DOMContentLoaded', () => {
       metaTag = ` [Buggy: ${buggy}]`;
     }
 
-    return `${r.display_name}${metaTag} — Max ${r.max_speed_mph} mph`;
+    const freerollSec = r.freeroll_time_sec || r.duration_sec;
+    const timeDisplay = freerollSec ? `${formatRollTime(freerollSec)} (${freerollSec.toFixed(1)}s)` : '--:--';
+
+    return `${r.display_name}${metaTag} — Time: ${timeDisplay}`;
   }
 
   function populateSelects() {

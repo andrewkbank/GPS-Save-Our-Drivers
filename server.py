@@ -142,11 +142,26 @@ def get_all_grouped_rolls():
 
         watch_names = ", ".join(d["device_name"] for d in fused_roll["watch_devices"])
 
+        # Segment fused roll to compute true course freeroll time & distance
+        seg_res = segmenter.segment_roll(fused_roll)
+        course_records = seg_res.get("course_records") or []
+        freeroll_time_sec = None
+        freeroll_dist_m = None
+        if course_records and len(course_records) > 1 and "course_records" in seg_res:
+            t_end = course_records[-1].get("seg_time_sec")
+            d_end = course_records[-1].get("seg_dist_m")
+            if t_end is not None and t_end > 0:
+                freeroll_time_sec = round(t_end, 2)
+            if d_end is not None and d_end > 0:
+                freeroll_dist_m = round(d_end, 2)
+
         grouped.append({
             "roll_id": roll_id,
             "display_name": f"{display_time} ({fused_roll['watch_count']} {'Watch' if fused_roll['watch_count'] == 1 else 'Watches Fused'})",
             "start_time": fused_roll.get("start_time"),
             "duration_sec": round(fused_roll.get("duration_sec", 0), 1),
+            "freeroll_time_sec": freeroll_time_sec,
+            "freeroll_dist_m": freeroll_dist_m,
             "total_dist_m": round(fused_roll.get("total_dist_m", 0), 1),
             "max_speed_mph": fused_roll.get("max_speed_mph", 0),
             "watch_count": fused_roll["watch_count"],
@@ -256,6 +271,8 @@ def api_rolls():
             "display_name": r["display_name"],
             "start_time": r["start_time"],
             "duration_sec": r["duration_sec"],
+            "freeroll_time_sec": r.get("freeroll_time_sec"),
+            "freeroll_dist_m": r.get("freeroll_dist_m"),
             "total_dist_m": r["total_dist_m"],
             "max_speed_mph": r["max_speed_mph"],
             "watch_count": r["watch_count"],
@@ -318,25 +335,32 @@ def api_compare():
         r2_records = r2_segmented.get("course_records") or r2["fused_roll"]["records"]
         v_avg_1 = sum(r["speed_mph"] for r in r1_records) / len(r1_records) if r1_records else 0.0
         v_avg_2 = sum(r["speed_mph"] for r in r2_records) / len(r2_records) if r2_records else 0.0
+
+        time_1 = round(r1_records[-1]["seg_time_sec"], 2) if r1_records and "seg_time_sec" in r1_records[-1] else (round(r1_records[-1]["elapsed_sec"] - r1_records[0]["elapsed_sec"], 2) if len(r1_records) > 1 else 0.0)
+        dist_1 = round(r1_records[-1]["seg_dist_m"], 2) if r1_records and "seg_dist_m" in r1_records[-1] else (round(r1_records[-1]["cum_dist_m"] - r1_records[0]["cum_dist_m"], 2) if len(r1_records) > 1 else 0.0)
+
+        time_2 = round(r2_records[-1]["seg_time_sec"], 2) if r2_records and "seg_time_sec" in r2_records[-1] else (round(r2_records[-1]["elapsed_sec"] - r2_records[0]["elapsed_sec"], 2) if len(r2_records) > 1 else 0.0)
+        dist_2 = round(r2_records[-1]["seg_dist_m"], 2) if r2_records and "seg_dist_m" in r2_records[-1] else (round(r2_records[-1]["cum_dist_m"] - r2_records[0]["cum_dist_m"], 2) if len(r2_records) > 1 else 0.0)
+
         metrics1 = {
             "entry_speed_mph": r1_records[0]["speed_mph"] if r1_records else 0,
             "min_speed_mph": min((r["speed_mph"] for r in r1_records), default=0),
             "apex_speed_mph": min((r["speed_mph"] for r in r1_records), default=0),
             "exit_speed_mph": r1_records[-1]["speed_mph"] if r1_records else 0,
-            "max_speed_mph": r1["max_speed_mph"],
+            "max_speed_mph": max((r["speed_mph"] for r in r1_records), default=0),
             "avg_speed_mph": round(v_avg_1, 2),
-            "transit_time_sec": r1["duration_sec"],
-            "distance_m": r1["total_dist_m"]
+            "transit_time_sec": time_1,
+            "distance_m": dist_1
         }
         metrics2 = {
             "entry_speed_mph": r2_records[0]["speed_mph"] if r2_records else 0,
             "min_speed_mph": min((r["speed_mph"] for r in r2_records), default=0),
             "apex_speed_mph": min((r["speed_mph"] for r in r2_records), default=0),
             "exit_speed_mph": r2_records[-1]["speed_mph"] if r2_records else 0,
-            "max_speed_mph": r2["max_speed_mph"],
+            "max_speed_mph": max((r["speed_mph"] for r in r2_records), default=0),
             "avg_speed_mph": round(v_avg_2, 2),
-            "transit_time_sec": r2["duration_sec"],
-            "distance_m": r2["total_dist_m"]
+            "transit_time_sec": time_2,
+            "distance_m": dist_2
         }
         rebased_r1 = r1_records
         rebased_r2 = r2_records
