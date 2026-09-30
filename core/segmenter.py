@@ -54,48 +54,87 @@ class CourseSegmenter:
             start_gate = seg["start_gate"]
             end_gate = seg["end_gate"]
 
-            # Find the first GPS record where the track crosses the start gate (finite)
-            start_idx = self._find_gate_crossing(records, start_gate, start_from=curr_search_idx)
+            # ── Find the gate crossings, returning (index_before, t) ──────────
+            start_i, start_t = self._find_gate_crossing_param(
+                records, start_gate, start_from=curr_search_idx
+            )
 
-            # Find the first GPS record where the track crosses the end gate after start
-            search_end_from = max(start_idx + 1, curr_search_idx + 1)
-            end_idx = self._find_gate_crossing(records, end_gate, start_from=search_end_from)
+            search_end_from = max(start_i + 1, curr_search_idx + 1)
+            end_i, end_t = self._find_gate_crossing_param(
+                records, end_gate, start_from=search_end_from
+            )
 
-            if end_idx <= start_idx or (end_idx - start_idx) < 1:
-                # If forward search failed, retry with global search as fallback
-                start_idx = self._find_gate_crossing(records, start_gate, start_from=0)
-                end_idx = self._find_gate_crossing(records, end_gate, start_from=start_idx + 1)
+            if end_i <= start_i:
+                # Forward search failed — retry globally
+                start_i, start_t = self._find_gate_crossing_param(
+                    records, start_gate, start_from=0
+                )
+                end_i, end_t = self._find_gate_crossing_param(
+                    records, end_gate, start_from=start_i + 1
+                )
 
-            if end_idx <= start_idx:
+            if end_i <= start_i:
                 continue
 
-            # Track the outermost crossing indices for the full-course crop
+            # ── Build synthetic boundary records via sub-sample interpolation ─
+            # start_pt: interpolated record at the exact gate-line crossing
+            # end_pt:   interpolated record at the exact gate-line crossing
+            if start_t > 0.0 and start_i + 1 < len(records):
+                start_pt = self._interpolate_record(
+                    records[start_i], records[start_i + 1], start_t
+                )
+            else:
+                start_pt = dict(records[start_i])
+
+            if end_t > 0.0 and end_i + 1 < len(records):
+                end_pt = self._interpolate_record(
+                    records[end_i], records[end_i + 1], end_t
+                )
+            else:
+                end_pt = dict(records[end_i])
+
+            # ── Track outermost crossings for full-course crop ────────────────
+            # Use start_i for indexing; the synthetic start_pt anchors time/dist.
             if course_start_idx is None:
-                course_start_idx = start_idx
-            course_end_idx = max(course_end_idx, end_idx)
+                course_start_idx = start_i
+            course_end_idx = max(course_end_idx, end_i)
 
             # Update search cursor for subsequent segments
-            curr_search_idx = max(curr_search_idx, start_idx)
+            curr_search_idx = max(curr_search_idx, start_i)
 
-            slice_records = records[start_idx : end_idx + 1]
+            # ── Build slice: synthetic start + interior samples + synthetic end ─
+            # Interior = records strictly between the two crossings
+            interior = records[start_i + 1 : end_i + 1]
+            slice_records = [start_pt] + [dict(r) for r in interior] + [end_pt]
 
-            # Re-zero segment distance and elapsed time so two runs can be directly overlaid!
+            # ── Re-zero segment distance and elapsed time ─────────────────────
             seg_rebased_records: List[Dict[str, Any]] = []
-            base_dist = slice_records[0]["cum_dist_m"]
-            base_time = slice_records[0]["elapsed_sec"]
+            base_dist = start_pt["cum_dist_m"]
+            base_time = start_pt["elapsed_sec"]
 
             for r in slice_records:
                 r_copy = dict(r)
-                r_copy["seg_dist_m"] = round(r["cum_dist_m"] - base_dist, 2)
-                r_copy["seg_time_sec"] = round(r["elapsed_sec"] - base_time, 2)
+                r_copy["seg_dist_m"]  = round(r["cum_dist_m"]  - base_dist, 4)
+                r_copy["seg_time_sec"] = round(r["elapsed_sec"] - base_time, 4)
                 seg_rebased_records.append(r_copy)
 
-            # Metric extraction
-            v_in = slice_records[0]["speed_mph"]
-            v_out = slice_records[-1]["speed_mph"]
+            # ── Metric extraction using interpolated boundary values ───────────
+            v_in  = start_pt["speed_mph"]
+            v_out = end_pt["speed_mph"]
             v_min = min(r["speed_mph"] for r in slice_records)
             v_max = max(r["speed_mph"] for r in slice_records)
-            v_avg = sum(r["speed_mph"] for r in slice_records) / len(slice_records)
+
+            # Average speed = total_distance / total_time, converted to mph.
+            # We deliberately do NOT average the GPS device's speed_mph field — that
+            # field is a Kalman-filtered estimate with a temporal lag that can read
+            # 1-2 mph below the true position-derived speed (especially during
+            # deceleration). distance and transit_time come from cum_dist_m /
+            # elapsed_sec which are the GPS position ground-truth, so this definition
+            # is always consistent with the displayed transit_time and distance values.
+            MPS_TO_MPH = 2.23694
+            transit_time = end_pt["elapsed_sec"] - start_pt["elapsed_sec"]
+            distance     = end_pt["cum_dist_m"]  - start_pt["cum_dist_m"]
+            v_avg = (distance / transit_time * MPS_TO_MPH) if transit_time > 0 else v_in
 
             # Check if segment defines a dedicated apex gate
             apex_gate = seg.get("apex_gate")
@@ -105,12 +144,10 @@ class CourseSegmenter:
             else:
                 v_apex = v_min
 
-            transit_time = slice_records[-1]["elapsed_sec"] - slice_records[0]["elapsed_sec"]
-            distance = slice_records[-1]["cum_dist_m"] - slice_records[0]["cum_dist_m"]
             delta_v = v_out - v_in
 
-            heading_in = slice_records[0].get("bearing_deg", 0.0)
-            heading_out = slice_records[-1].get("bearing_deg", 0.0)
+            heading_in    = start_pt.get("bearing_deg", 0.0)
+            heading_out   = end_pt.get("bearing_deg", 0.0)
             heading_delta = (heading_out - heading_in + 180.0) % 360.0 - 180.0
 
             segmented_results[seg_id] = {
@@ -127,7 +164,7 @@ class CourseSegmenter:
                     "max_speed_mph": round(v_max, 2),
                     "delta_speed_mph": round(delta_v, 2),
                     "avg_speed_mph": round(v_avg, 2),
-                    "transit_time_sec": round(transit_time, 2),
+                    "transit_time_sec": round(transit_time, 4),
                     "distance_m": round(distance, 2),
                     "heading_in_deg": round(heading_in, 1),
                     "heading_out_deg": round(heading_out, 1),
@@ -201,6 +238,68 @@ class CourseSegmenter:
 
         return False
 
+    @staticmethod
+    def _line_intersection_t(
+        p1_lat: float, p1_lon: float,
+        p2_lat: float, p2_lon: float,
+        q1_lat: float, q1_lon: float,
+        q2_lat: float, q2_lon: float,
+    ) -> float:
+        """
+        Return the parametric parameter t ∈ [0, 1] along the GPS step p1→p2
+        where it intersects the gate line q1→q2.
+
+        Uses the standard 2-D line-segment intersection formula treating
+        lat/lon as flat Cartesian coordinates (valid at these distances).
+        Returns 0.5 as a safe fallback if the lines are nearly parallel.
+        """
+        # Direction vectors
+        dx_p = p2_lat - p1_lat
+        dy_p = p2_lon - p1_lon
+        dx_q = q2_lat - q1_lat
+        dy_q = q2_lon - q1_lon
+
+        denom = dx_p * dy_q - dy_p * dx_q
+        if abs(denom) < 1e-15:  # parallel / collinear — return midpoint
+            return 0.5
+
+        dx_start = q1_lat - p1_lat
+        dy_start = q1_lon - p1_lon
+        t = (dx_start * dy_q - dy_start * dx_q) / denom
+        return max(0.0, min(1.0, t))  # clamp to [0, 1]
+
+    @staticmethod
+    def _interpolate_record(
+        r1: Dict[str, Any],
+        r2: Dict[str, Any],
+        t: float,
+    ) -> Dict[str, Any]:
+        """
+        Linearly interpolate a synthetic GPS record between r1 (t=0) and r2 (t=1).
+
+        Scalar fields blended: lat, lon, elapsed_sec, cum_dist_m, speed_mph,
+        bearing_deg (shortest-path wrap), and any other numeric fields copied
+        from r1.  The record is flagged as interpolated for downstream consumers.
+        """
+        def lerp(a, b):
+            return a + (b - a) * t
+
+        def lerp_angle(a, b):
+            """Lerp angles handling the 0°/360° wrap-around."""
+            diff = ((b - a) + 180.0) % 360.0 - 180.0
+            return (a + diff * t) % 360.0
+
+        result = dict(r1)  # start from r1, inherit non-numeric fields
+        result["lat"]         = lerp(r1["lat"],         r2["lat"])
+        result["lon"]         = lerp(r1["lon"],         r2["lon"])
+        result["elapsed_sec"] = lerp(r1["elapsed_sec"], r2["elapsed_sec"])
+        result["cum_dist_m"]  = lerp(r1["cum_dist_m"],  r2["cum_dist_m"])
+        result["speed_mph"]   = lerp(r1["speed_mph"],   r2["speed_mph"])
+        if "bearing_deg" in r1 and "bearing_deg" in r2:
+            result["bearing_deg"] = lerp_angle(r1["bearing_deg"], r2["bearing_deg"])
+        result["_interpolated"] = True  # diagnostic flag
+        return result
+
     def _find_gate_crossing(
         self,
         records: List[Dict[str, Any]],
@@ -208,24 +307,37 @@ class CourseSegmenter:
         start_from: int = 0,
     ) -> int:
         """
-        Return the index of the GPS record where the track first crosses the
-        *finite* gate line segment, searching from start_from onward.
+        Thin wrapper — returns just the index of the record *after* the crossing.
+        Used for apex_gate lookups and other places that only need an index.
+        """
+        idx, _t = self._find_gate_crossing_param(records, gate, start_from)
+        return idx
 
-        The check is pair-wise: for each consecutive pair (records[i], records[i+1])
-        the track micro-segment is tested against the gate line.  The index
-        returned is i+1 (the record just after the crossing).
+    def _find_gate_crossing_param(
+        self,
+        records: List[Dict[str, Any]],
+        gate: Dict[str, Any],
+        start_from: int = 0,
+    ) -> tuple:
+        """
+        Return ``(i, t)`` where ``i`` is the index of the record *before* the
+        gate crossing and ``t ∈ [0, 1]`` is the parametric position along the
+        step ``records[i] → records[i+1]`` at which the gate is crossed.
 
-        Falls back to closest-point if no finite crossing is found (e.g. short
-        or noisy track that never cleanly passes through the gate).
+        The synthetic crossing point can then be computed with
+        ``_interpolate_record(records[i], records[i+1], t)``.
+
+        Falls back to ``(closest_idx, 0.0)`` when no clean segment crossing is
+        found (e.g. noisy/short tracks that never cleanly pass through the gate).
         """
         if not records:
-            return 0
+            return 0, 0.0
         start_from = max(0, min(start_from, len(records) - 1))
 
         gate_line = gate.get("gate_line", [])
         if len(gate_line) < 2:
             # No gate line defined — fall back to closest point
-            return self._find_closest_point_to_gate(records, gate, start_from)
+            return self._find_closest_point_to_gate(records, gate, start_from), 0.0
 
         q1_lat = gate_line[0]["lat"]
         q1_lon = gate_line[0]["lon"]
@@ -241,10 +353,16 @@ class CourseSegmenter:
                 q1_lat, q1_lon,
                 q2_lat, q2_lon,
             ):
-                return i + 1  # Record immediately after crossing
+                t = self._line_intersection_t(
+                    p1["lat"], p1["lon"],
+                    p2["lat"], p2["lon"],
+                    q1_lat, q1_lon,
+                    q2_lat, q2_lon,
+                )
+                return i, t
 
         # Fallback: closest point to gate midpoint within search window
-        return self._find_closest_point_to_gate(records, gate, start_from)
+        return self._find_closest_point_to_gate(records, gate, start_from), 0.0
 
     def _find_closest_point_to_gate(
         self,

@@ -226,11 +226,53 @@ class TelemetryChart {
 
     if (this.viewMode === 'velocity_profile') {
       // ── Mode 1: Velocity Profile (v vs Track Distance) ──
+      // 5-point median filter: eliminates up to 2-consecutive-point GPS spikes.
+      // A 3-point median can't fix 2-point spikes (both neighbors are elevated so
+      // the spike wins the vote). A 5-point window always has ≥3 normal values vs
+      // ≤2 spike values, so both spike samples get correctly replaced.
+      // Monotone ramps are unchanged: median([26,27,28,29,30]) = 28 at each step.
+      const medianFilter5 = (arr) => arr.map((v, i) => {
+        const lo = Math.max(0, i - 2);
+        const hi = Math.min(arr.length - 1, i + 2);
+        const window = arr.slice(lo, hi + 1).sort((a, b) => a - b);
+        return window[Math.floor(window.length / 2)];
+      });
+
       const extractProfilePoints = (run) => {
-        if (!run || !run.records) return [];
-        return run.records.map(r => ({
+        if (!run || !run.records || run.records.length < 2) return [];
+        const recs = run.records;
+        const MPS_TO_MPH = 2.23694;
+
+        if (this.metricMode !== 'speed') {
+          // accel_g is already position-derived in the parser — use as-is
+          return recs.map(r => ({
+            x: r.seg_dist_m !== undefined ? r.seg_dist_m : r.cum_dist_m,
+            y: r.accel_g
+          }));
+        }
+
+        // Compute position-derived instantaneous speed at each point.
+        // v[i] = Δdist / Δtime between record i-1 and record i+1 (central difference),
+        // falling back to a one-sided difference at the endpoints.
+        // This avoids the Garmin's Kalman-filtered speed_mph lag.
+        const rawSpeeds = new Array(recs.length);
+        for (let i = 0; i < recs.length; i++) {
+          const iL = Math.max(0, i - 1);
+          const iR = Math.min(recs.length - 1, i + 1);
+          if (iL === iR) {
+            rawSpeeds[i] = recs[i].speed_mph; // single-point fallback
+            continue;
+          }
+          const dd = recs[iR].seg_dist_m - recs[iL].seg_dist_m;
+          const dt = recs[iR].seg_time_sec - recs[iL].seg_time_sec;
+          rawSpeeds[i] = dt > 0 ? (dd / dt) * MPS_TO_MPH : recs[i].speed_mph;
+        }
+
+        const speeds = medianFilter5(rawSpeeds);
+
+        return recs.map((r, i) => ({
           x: r.seg_dist_m !== undefined ? r.seg_dist_m : r.cum_dist_m,
-          y: this.metricMode === 'speed' ? r.speed_mph : r.accel_g
+          y: speeds[i]
         }));
       };
 
@@ -268,10 +310,32 @@ class TelemetryChart {
     } else if (this.viewMode === 'average_speed') {
       // ── Mode 2: Speed vs. Time with Average Benchmarks ──
       const extractTimeSpeedPoints = (run) => {
-        if (!run || !run.records) return [];
-        return run.records.map(r => ({
+        if (!run || !run.records || run.records.length < 2) return [];
+        const recs = run.records;
+        const MPS_TO_MPH = 2.23694;
+
+        // Central-difference position-derived speed, same method as velocity profile
+        const rawSpeeds = new Array(recs.length);
+        for (let i = 0; i < recs.length; i++) {
+          const iL = Math.max(0, i - 1);
+          const iR = Math.min(recs.length - 1, i + 1);
+          if (iL === iR) { rawSpeeds[i] = recs[i].speed_mph; continue; }
+          const dd = recs[iR].seg_dist_m - recs[iL].seg_dist_m;
+          const dt = recs[iR].seg_time_sec - recs[iL].seg_time_sec;
+          rawSpeeds[i] = dt > 0 ? (dd / dt) * MPS_TO_MPH : recs[i].speed_mph;
+        }
+
+        // 5-point median filter — same as velocity profile, handles 2-point spikes
+        const speeds = rawSpeeds.map((v, i) => {
+          const lo = Math.max(0, i - 2);
+          const hi = Math.min(rawSpeeds.length - 1, i + 2);
+          const window = rawSpeeds.slice(lo, hi + 1).sort((a, b) => a - b);
+          return window[Math.floor(window.length / 2)];
+        });
+
+        return recs.map((r, i) => ({
           x: r.seg_time_sec !== undefined ? r.seg_time_sec : r.elapsed_sec,
-          y: r.speed_mph
+          y: speeds[i]
         }));
       };
 
