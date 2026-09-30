@@ -18,6 +18,9 @@
 </head>
 <body>
 
+  <!-- Global Top Progress Loading Bar -->
+  <div class="global-progress-bar" id="global-progress-bar"></div>
+
   <!-- Top Navigation Bar -->
   <header class="navbar">
     <div class="brand-section">
@@ -41,7 +44,7 @@
       </button>
 
       <button class="btn" id="btn-drive-sync" title="Sync data to Google Drive">
-        <span>☁️</span> <span id="drive-sync-text">Drive</span>
+        <span id="drive-sync-icon">☁️</span> <span id="drive-sync-text">Drive</span>
       </button>
 
       <button class="btn btn-primary" id="btn-upload-modal">
@@ -59,7 +62,9 @@
         <div class="selectors-group">
           <div class="select-control">
             <label for="primary-roll-select">Primary Roll (Current)</label>
-            <select id="primary-roll-select" class="custom-select"></select>
+            <select id="primary-roll-select" class="custom-select">
+              <option value="" disabled selected>⏳ Loading activities & telemetry...</option>
+            </select>
           </div>
 
           <div class="select-control">
@@ -226,6 +231,10 @@
         </div>
         <div class="chart-container">
           <canvas id="telemetry-canvas"></canvas>
+          <div class="component-loading-overlay" id="chart-loading-overlay">
+            <div class="loading-spinner"></div>
+            <span id="chart-loading-text">Rendering telemetry profile...</span>
+          </div>
         </div>
       </div>
 
@@ -239,16 +248,24 @@
             Auto-focuses on isolated segment
           </span>
         </div>
-        <div id="course-map"></div>
+        <div id="course-map">
+          <div class="component-loading-overlay" id="map-loading-overlay">
+            <div class="loading-spinner"></div>
+            <span id="map-loading-text">Plotting course trajectory...</span>
+          </div>
+        </div>
       </div>
     </section>
 
     <!-- Driver Notes & Feedback Section -->
     <section class="notes-card">
       <div class="card-title-row">
-        <h2 class="card-title">
-          <span>📝</span> Driver Reflections & Roll Notes
-        </h2>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <h2 class="card-title">
+            <span>📝</span> Driver Reflections & Roll Notes
+          </h2>
+          <span class="notes-status-badge" id="notes-status-badge" style="display: none;"></span>
+        </div>
         <button class="btn btn-primary" id="btn-save-notes">
           <span>💾</span> Save Notes (Local & Drive Sync)
         </button>

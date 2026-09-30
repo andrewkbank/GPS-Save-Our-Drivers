@@ -7,6 +7,8 @@ course segment isolation, driver notes persistence, and Bluetooth/USB auto-sync.
 import os
 import glob
 import json
+import pickle
+import threading
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
@@ -41,13 +43,26 @@ segmenter = CourseSegmenter()
 notes_mgr = NotesManager(DATA_NOTES)
 drive_sync = DriveSyncHelper(CONFIG_FILE)
 
-# In-memory parsed cache to keep app ultra-fast
+# In-memory caches to keep app ultra-fast
 parsed_cache = {}
+_cached_raw_signature = None
+_cached_grouped_rolls = None
+_cached_rolls_by_id = {}
+
+
+def invalidate_rolls_cache():
+    """Invalidate all roll caches when new files arrive or manual rescan occurs."""
+    global _cached_raw_signature, _cached_grouped_rolls, _cached_rolls_by_id
+    _cached_raw_signature = None
+    _cached_grouped_rolls = None
+    _cached_rolls_by_id.clear()
+    parsed_cache.clear()
+
 
 def on_new_sync_file(filepath: str, conn_type: str):
     print(f"[{conn_type.upper()}] Ingested new activity: {filepath}")
-    # Invalidate cache
-    parsed_cache.clear()
+    invalidate_rolls_cache()
+
 
 bt_watcher = BluetoothSyncWatcher(
     raw_dest_dir=DATA_RAW,
@@ -57,15 +72,25 @@ bt_watcher = BluetoothSyncWatcher(
 bt_watcher.start()
 
 
-def get_all_grouped_rolls():
-    """Scan raw directory, parse activities, and group by same-roll multi-watch detection."""
+def get_all_grouped_rolls(force_refresh: bool = False):
+    """
+    Scan raw directory, parse activities (with disk & memory caching),
+    and group by same-roll multi-watch detection. Results are cached in memory.
+    """
+    global _cached_raw_signature, _cached_grouped_rolls, _cached_rolls_by_id
+
     found_files = set()
-    for ext in ("*.fit", "*.gpx"):
+    for ext in ("*.fit", "*.gpx", "*.FIT", "*.GPX"):
         for p in glob.glob(os.path.join(DATA_RAW, ext)):
             found_files.add(os.path.normpath(p))
     files = sorted(list(found_files))
 
-    # Parse all files with cache
+    # Fast cache check: if files on disk haven't changed, return cached grouped rolls instantly
+    sig = tuple((f, os.path.getmtime(f)) for f in files)
+    if not force_refresh and _cached_grouped_rolls is not None and _cached_raw_signature == sig:
+        return _cached_grouped_rolls
+
+    # Parse all files with memory + disk pickle cache
     parsed_runs = []
     for fpath in files:
         fname = os.path.basename(fpath)
@@ -74,20 +99,40 @@ def get_all_grouped_rolls():
 
         if cache_key in parsed_cache:
             parsed_runs.append(parsed_cache[cache_key])
-        else:
+            continue
+
+        # Check disk cache in DATA_PROCESSED
+        disk_cache_path = os.path.join(DATA_PROCESSED, f"{cache_key}.pkl")
+        if os.path.exists(disk_cache_path):
             try:
-                run_data = GarminParser.parse_file(fpath)
-                if run_data.get("point_count", 0) > 5:
-                    parsed_cache[cache_key] = run_data
-                    parsed_runs.append(run_data)
-            except Exception as e:
-                print(f"Error parsing {fname}: {e}")
+                with open(disk_cache_path, "rb") as fp:
+                    run_data = pickle.load(fp)
+                parsed_cache[cache_key] = run_data
+                parsed_runs.append(run_data)
+                continue
+            except Exception:
+                pass
+
+        try:
+            run_data = GarminParser.parse_file(fpath)
+            if run_data.get("point_count", 0) > 5:
+                parsed_cache[cache_key] = run_data
+                parsed_runs.append(run_data)
+                # Persist to disk cache
+                try:
+                    with open(disk_cache_path, "wb") as fp:
+                        pickle.dump(run_data, fp)
+                except Exception as pe:
+                    print(f"Error caching {fname} to disk: {pe}")
+        except Exception as e:
+            print(f"Error parsing {fname}: {e}")
 
     # Sort runs by start time
     parsed_runs.sort(key=lambda r: r.get("start_time", ""), reverse=True)
 
     # Group runs recorded during the same roll (multi-watch pairing)
     grouped = []
+    rolls_by_id = {}
     used_indices = set()
 
     for i in range(len(parsed_runs)):
@@ -105,7 +150,7 @@ def get_all_grouped_rolls():
 
         # Fuse group
         fused_roll = MultiWatchFusion.fuse_runs(current_group)
-        roll_id = fused_roll["roll_id"]
+        roll_id = fused_roll.get("roll_id", f"roll_{i}")
 
         # Check for existing notes
         notes = notes_mgr.get_notes(roll_id)
@@ -140,10 +185,12 @@ def get_all_grouped_rolls():
             except Exception:
                 display_time = fused_roll["start_time"]
 
-        watch_names = ", ".join(d["device_name"] for d in fused_roll["watch_devices"])
+        watch_names = ", ".join(d["device_name"] for d in fused_roll.get("watch_devices", []))
 
-        # Segment fused roll to compute true course freeroll time & distance
+        # Precompute course segmentation once and store it on the roll object
         seg_res = segmenter.segment_roll(fused_roll)
+        fused_roll["_segmented"] = seg_res
+
         course_records = seg_res.get("course_records") or []
         freeroll_time_sec = None
         freeroll_dist_m = None
@@ -155,7 +202,7 @@ def get_all_grouped_rolls():
             if d_end is not None and d_end > 0:
                 freeroll_dist_m = round(d_end, 2)
 
-        grouped.append({
+        roll_item = {
             "roll_id": roll_id,
             "display_name": f"{display_time} ({fused_roll['watch_count']} {'Watch' if fused_roll['watch_count'] == 1 else 'Watches Fused'})",
             "start_time": fused_roll.get("start_time"),
@@ -171,10 +218,21 @@ def get_all_grouped_rolls():
             "buggy_name": buggy_name,
             "gps_files": gps_files,
             "notes_files": notes_files,
-            "fused_roll": fused_roll
-        })
+            "fused_roll": fused_roll,
+            "segmented": seg_res
+        }
+        grouped.append(roll_item)
+        rolls_by_id[roll_id] = roll_item
+
+    _cached_raw_signature = sig
+    _cached_grouped_rolls = grouped
+    _cached_rolls_by_id = rolls_by_id
 
     return grouped
+
+
+# Warm rolls cache in background so initial user requests are instantaneous
+threading.Thread(target=get_all_grouped_rolls, daemon=True).start()
 
 
 def roll_has_notes(notes: dict) -> bool:
@@ -194,6 +252,15 @@ def roll_has_notes(notes: dict) -> bool:
 
 def get_roll_gps_files(roll_id: str) -> list:
     """Return paths of all GPS files (.fit, .gpx) associated with this roll_id."""
+    r = _cached_rolls_by_id.get(roll_id)
+    if r:
+        gps_files = []
+        for d in r.get("fused_roll", {}).get("watch_devices", []):
+            src = d.get("full_path") or os.path.join(DATA_RAW, d.get("source_file", ""))
+            if src and os.path.exists(src):
+                gps_files.append(os.path.normpath(src))
+        return gps_files
+
     rolls = get_all_grouped_rolls()
     for r in rolls:
         if r["roll_id"] == roll_id:
@@ -255,10 +322,12 @@ def index():
 
 @app.route("/api/status")
 def api_status():
+    global _cached_grouped_rolls
+    total = len(_cached_grouped_rolls) if _cached_grouped_rolls is not None else len(get_all_grouped_rolls())
     return jsonify({
         "bluetooth": bt_watcher.get_status(),
-        "drive": drive_sync.get_status(),
-        "total_rolls": len(get_all_grouped_rolls())
+        "drive": drive_sync.get_status(fast=True),
+        "total_rolls": total
     })
 
 
@@ -290,13 +359,15 @@ def api_rolls():
 
 @app.route("/api/roll/<roll_id>")
 def api_roll_detail(roll_id):
-    rolls = get_all_grouped_rolls()
-    match = next((r for r in rolls if r["roll_id"] == roll_id), None)
+    match = _cached_rolls_by_id.get(roll_id)
+    if not match:
+        rolls = get_all_grouped_rolls()
+        match = next((r for r in rolls if r["roll_id"] == roll_id), None)
     if not match:
         return jsonify({"error": "Roll not found"}), 404
 
     fused_roll = match["fused_roll"]
-    segmented = segmenter.segment_roll(fused_roll)
+    segmented = match.get("segmented") or segmenter.segment_roll(fused_roll)
     notes = notes_mgr.get_notes(roll_id)
 
     return jsonify({
@@ -318,15 +389,18 @@ def api_compare():
     roll2_id = request.args.get("roll2")
     seg_id = request.args.get("segment", "full")
 
-    rolls = get_all_grouped_rolls()
-    r1 = next((r for r in rolls if r["roll_id"] == roll1_id), None)
-    r2 = next((r for r in rolls if r["roll_id"] == roll2_id), None)
+    r1 = _cached_rolls_by_id.get(roll1_id)
+    r2 = _cached_rolls_by_id.get(roll2_id)
+    if not r1 or not r2:
+        rolls = get_all_grouped_rolls()
+        r1 = r1 or next((r for r in rolls if r["roll_id"] == roll1_id), None)
+        r2 = r2 or next((r for r in rolls if r["roll_id"] == roll2_id), None)
 
     if not r1 or not r2:
         return jsonify({"error": "One or both rolls not found"}), 400
 
-    r1_segmented = segmenter.segment_roll(r1["fused_roll"])
-    r2_segmented = segmenter.segment_roll(r2["fused_roll"])
+    r1_segmented = r1.get("segmented") or segmenter.segment_roll(r1["fused_roll"])
+    r2_segmented = r2.get("segmented") or segmenter.segment_roll(r2["fused_roll"])
 
     if seg_id == "full":
         # Use gate-cropped course records (first gate → last gate) so the map
@@ -417,28 +491,43 @@ def api_notes(roll_id):
             segment_notes=data.get("segment_notes", {}),
             gps_files=gps_files
         )
-        # If Google Drive is authenticated and this roll has notes, auto-sync
+
+        # Update in-memory roll cache immediately so UI reflects notes without rescan
+        if roll_id in _cached_rolls_by_id:
+            _cached_rolls_by_id[roll_id]["has_notes"] = roll_has_notes(saved)
+            _cached_rolls_by_id[roll_id]["driver_name"] = saved.get("driver_name", "")
+            _cached_rolls_by_id[roll_id]["buggy_name"] = saved.get("buggy_name", "")
+
+        # If Google Drive is authenticated and this roll has notes, auto-sync in background thread
+        drive_syncing = False
         if roll_has_notes(saved) and drive_sync.get_status().get("authenticated"):
             try:
                 json_path, txt_path = notes_mgr._get_paths(roll_id)
                 sync_targets = [f for f in (json_path, txt_path) if os.path.exists(f)]
                 sync_targets.extend(gps_files)
                 if sync_targets:
-                    drive_sync.sync_files(sync_targets)
+                    def _async_sync(targets):
+                        try:
+                            drive_sync.sync_files(targets)
+                        except Exception as e:
+                            print(f"[DriveSync] Error in background note sync: {e}")
+                    threading.Thread(target=_async_sync, args=(sync_targets,), daemon=True).start()
+                    drive_syncing = True
             except Exception as e:
-                print(f"Error auto-syncing notes and GPS files to Drive: {e}")
+                print(f"Error launching background Drive sync: {e}")
 
-        return jsonify({"success": True, "notes": saved})
+        return jsonify({"success": True, "notes": saved, "drive_syncing": drive_syncing})
     else:
         return jsonify(notes_mgr.get_notes(roll_id))
 
 
 @app.route("/api/drive/status")
 def api_drive_status():
-    status = drive_sync.get_status()
+    force = request.args.get("force", "false").lower() == "true"
+    status = drive_sync.get_status(force_refresh=force)
     folder_files = []
     if status.get("authenticated"):
-        folder_files = drive_sync.list_folder_files()
+        folder_files = drive_sync.list_folder_files(force_refresh=force)
     return jsonify({
         "status": status,
         "folder_files": folder_files
@@ -468,10 +557,10 @@ def api_drive_sync():
 
     # 3. If any new files were downloaded, clear parsed runs cache so UI picks them up
     if download_res.get("downloaded_count", 0) > 0:
-        parsed_cache.clear()
+        invalidate_rolls_cache()
 
     # 4. Refresh directory listing
-    folder_files = drive_sync.list_folder_files()
+    folder_files = drive_sync.list_folder_files(force_refresh=True)
 
     overall_success = upload_res.get("success", False) and download_res.get("success", False)
 
@@ -495,10 +584,7 @@ def api_upload():
     filename = secure_filename(file.filename)
     dest_path = os.path.join(DATA_RAW, filename)
     file.save(dest_path)
-    parsed_cache.clear()
-
-    # Note: We intentionally do NOT auto-upload raw GPS files here.
-    # Telemetry is only uploaded once driver notes are attached, protecting personal watch runs.
+    invalidate_rolls_cache()
 
     return jsonify({
         "success": True,
@@ -512,7 +598,7 @@ def api_scan():
     """Trigger manual rescan of Bluetooth exchange & USB paths."""
     bt_watcher._check_bluetooth_paths()
     bt_watcher._check_usb_drives()
-    parsed_cache.clear()
+    invalidate_rolls_cache()
     return jsonify({"success": True, "status": bt_watcher.get_status()})
 
 

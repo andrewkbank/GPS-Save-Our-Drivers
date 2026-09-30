@@ -12,6 +12,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let segmentsMeta = [];
   let currentRollDetail = null;
 
+  // Client-Side In-Memory Caches for Instant (0ms) Navigation
+  const rollDetailCache = new Map();
+  const compareCache = new Map();
+
   // Initialize Map and Chart
   const courseMap = new CourseMap('course-map');
   const telemetryChart = new TelemetryChart('telemetry-canvas');
@@ -37,6 +41,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const fileInput = document.getElementById('file-input');
   const dropZone = document.getElementById('drop-zone');
 
+  // Loading UI Elements
+  const progressBar = document.getElementById('global-progress-bar');
+  const chartOverlay = document.getElementById('chart-loading-overlay');
+  const mapOverlay = document.getElementById('map-loading-overlay');
+  const chartLoadingText = document.getElementById('chart-loading-text');
+  const mapLoadingText = document.getElementById('map-loading-text');
+  const notesStatusBadge = document.getElementById('notes-status-badge');
+  const driveSyncIcon = document.getElementById('drive-sync-icon');
+
   // Notes Elements
   const driverNameInput = document.getElementById('driver-name');
   const buggyNameInput = document.getElementById('buggy-name');
@@ -52,6 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Metric HUD Elements (2-card focused comparison)
   const cardAvgSpeed = document.getElementById('card-avg-speed');
   const cardDistance = document.getElementById('card-distance');
+  const cardTransitTime = document.getElementById('card-transit-time');
   const valAvgSpeed = document.getElementById('val-avg-speed');
   const valCompAvgSpeed = document.getElementById('val-comp-avg-speed');
   const deltaAvgSpeed = document.getElementById('delta-avg-speed');
@@ -77,6 +91,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let currentChartMode = 'velocity_profile';
 
+  // Loading UI State Helpers
+  let activeRequests = 0;
+  function setGlobalLoading(isLoading) {
+    if (isLoading) {
+      activeRequests++;
+      if (progressBar) progressBar.classList.add('active');
+    } else {
+      activeRequests = Math.max(0, activeRequests - 1);
+      if (activeRequests === 0 && progressBar) {
+        progressBar.classList.remove('active');
+      }
+    }
+  }
+
+  function setChartLoading(isLoading, msg = 'Rendering telemetry profile...') {
+    if (!chartOverlay) return;
+    if (chartLoadingText && msg) chartLoadingText.textContent = msg;
+    chartOverlay.classList.toggle('active', isLoading);
+  }
+
+  function setMapLoading(isLoading, msg = 'Plotting course trajectory...') {
+    if (!mapOverlay) return;
+    if (mapLoadingText && msg) mapLoadingText.textContent = msg;
+    mapOverlay.classList.toggle('active', isLoading);
+  }
+
+  function setStatsLoading(isLoading) {
+    const statCards = [cardAvgSpeed, cardDistance, cardTransitTime];
+    statCards.forEach(c => {
+      if (c) c.classList.toggle('stat-loading', isLoading);
+    });
+  }
+
   // Toast notifier
   function showToast(msg) {
     toast.textContent = msg;
@@ -84,15 +131,16 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => toast.classList.remove('show'), 3500);
   }
 
-  // Load Initial Data
+  // Load Initial Data (Fast Priority + Non-blocking Lazy Load)
   async function initApp() {
-    await fetchStatus();
-    await fetchRolls();
     setupEventListeners();
 
-    // Periodic check for new Bluetooth files every 5s
-    setInterval(fetchStatus, 5000);
-    await fetchDriveStatus();
+    // Priority 1: Fetch and display rolls & initial telemetry immediately
+    await fetchRolls();
+
+    // Priority 2: Non-blocking background checks (status, Drive)
+    fetchStatus();
+    fetchDriveStatus();
   }
 
   const btnDriveSync = document.getElementById('btn-drive-sync');
@@ -130,6 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function fetchRolls() {
+    setGlobalLoading(true);
     try {
       const prevPrimary = primarySelect.value;
       const prevCompare = compareSelect.value;
@@ -150,6 +199,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (e) {
       console.error('Error fetching rolls:', e);
+    } finally {
+      setGlobalLoading(false);
     }
   }
 
@@ -201,45 +252,60 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadRollDetail(rollId) {
     if (!rollId) return;
+
+    if (rollDetailCache.has(rollId)) {
+      currentRollDetail = rollDetailCache.get(rollId);
+      renderRollDetailContent();
+      return;
+    }
+
+    setGlobalLoading(true);
     try {
       const res = await fetch(`/api/roll/${rollId}`);
       currentRollDetail = await res.json();
-
-      // Render watch badge
-      const count = currentRollDetail.roll.watch_count || 1;
-      const watchSummary = currentRollDetail.roll.watch_devices.map(d => d.device_name).join(' + ');
-      watchBadge.innerHTML = `<span>🛰️</span> <b>${count} Watch${count > 1 ? 'es Fused' : ''}:</b> ${watchSummary}`;
-
-      // Update files debug component
-      if (debugRollId) debugRollId.textContent = rollId;
-      const assoc = currentRollDetail.associated_files || {};
-      const gpsList = (assoc.gps_files && assoc.gps_files.length)
-        ? assoc.gps_files.join(', ')
-        : (currentRollDetail.roll && currentRollDetail.roll.watch_devices ? currentRollDetail.roll.watch_devices.map(d => d.source_file).filter(Boolean).join(', ') : '(None)');
-      const notesList = (assoc.notes_files && assoc.notes_files.length)
-        ? assoc.notes_files.join(', ')
-        : '(None on disk)';
-
-      if (debugGpsFiles) debugGpsFiles.textContent = gpsList || '(None)';
-      if (debugNotesFiles) debugNotesFiles.textContent = notesList || '(None)';
-
-      // Render segment bar buttons if not done
-      if (segmentsMeta.length === 0) {
-        segmentsMeta = currentRollDetail.course_segments_meta || [];
-        courseMap.setSegmentsMeta(segmentsMeta);
-        renderSegmentButtons();
-      }
-
-      // Populate notes
-      const notes = currentRollDetail.notes || {};
-      driverNameInput.value = notes.driver_name || '';
-      buggyNameInput.value = notes.buggy_name || 'Apex Buggy';
-      generalNotesInput.value = notes.general_notes || '';
-      updateSegmentNotesInput();
-
+      rollDetailCache.set(rollId, currentRollDetail);
+      renderRollDetailContent();
     } catch (e) {
       console.error('Error loading roll details:', e);
+    } finally {
+      setGlobalLoading(false);
     }
+  }
+
+  function renderRollDetailContent() {
+    if (!currentRollDetail || !currentRollDetail.roll) return;
+
+    // Render watch badge
+    const count = currentRollDetail.roll.watch_count || 1;
+    const watchSummary = (currentRollDetail.roll.watch_devices || []).map(d => d.device_name).join(' + ');
+    watchBadge.innerHTML = `<span>🛰️</span> <b>${count} Watch${count > 1 ? 'es Fused' : ''}:</b> ${watchSummary}`;
+
+    // Update files debug component
+    if (debugRollId) debugRollId.textContent = currentRollDetail.roll.roll_id || currentRollId;
+    const assoc = currentRollDetail.associated_files || {};
+    const gpsList = (assoc.gps_files && assoc.gps_files.length)
+      ? assoc.gps_files.join(', ')
+      : (currentRollDetail.roll && currentRollDetail.roll.watch_devices ? currentRollDetail.roll.watch_devices.map(d => d.source_file).filter(Boolean).join(', ') : '(None)');
+    const notesList = (assoc.notes_files && assoc.notes_files.length)
+      ? assoc.notes_files.join(', ')
+      : '(None on disk)';
+
+    if (debugGpsFiles) debugGpsFiles.textContent = gpsList || '(None)';
+    if (debugNotesFiles) debugNotesFiles.textContent = notesList || '(None)';
+
+    // Render segment bar buttons if not done
+    if (segmentsMeta.length === 0) {
+      segmentsMeta = currentRollDetail.course_segments_meta || [];
+      courseMap.setSegmentsMeta(segmentsMeta);
+      renderSegmentButtons();
+    }
+
+    // Populate notes
+    const notes = currentRollDetail.notes || {};
+    driverNameInput.value = notes.driver_name || '';
+    buggyNameInput.value = notes.buggy_name || 'Apex Buggy';
+    generalNotesInput.value = notes.general_notes || '';
+    updateSegmentNotesInput();
   }
 
   function renderSegmentButtons() {
@@ -330,59 +396,79 @@ document.addEventListener('DOMContentLoaded', () => {
   async function updateComparisonView() {
     if (!currentRollId) return;
 
+    const cacheKey = `${compareRollId || 'solo'}__${currentRollId}__${activeSegmentId}`;
+    if (compareCache.has(cacheKey)) {
+      renderComparisonData(compareCache.get(cacheKey));
+      return;
+    }
+
+    setGlobalLoading(true);
+    setStatsLoading(true);
+    setChartLoading(true, 'Computing segment profile...');
+    setMapLoading(true, 'Updating course trajectory...');
+
     try {
-      let url = `/api/compare?roll1=${encodeURIComponent(compareRollId || currentRollId)}&roll2=${encodeURIComponent(currentRollId)}&segment=${activeSegmentId}`;
+      const url = `/api/compare?roll1=${encodeURIComponent(compareRollId || currentRollId)}&roll2=${encodeURIComponent(currentRollId)}&segment=${encodeURIComponent(activeSegmentId)}`;
       const res = await fetch(url);
       const data = await res.json();
-
-      const rollPrimary = data.roll2; // Current roll
-      const rollCompare = compareRollId ? data.roll1 : null; // Comparison roll
-      const deltas = data.deltas;
-
-      // Update HUD Metrics (2 cards: Average Speed & Traveled Distance)
-      const m = rollPrimary.metrics;
-      const mComp = rollCompare ? rollCompare.metrics : null;
-
-      // 1. Average Speed
-      if (valAvgSpeed) {
-        valAvgSpeed.textContent = (m.avg_speed_mph !== undefined) ? m.avg_speed_mph.toFixed(1) : '--.-';
-      }
-      if (valCompAvgSpeed) {
-        valCompAvgSpeed.textContent = (mComp && mComp.avg_speed_mph !== undefined) ? mComp.avg_speed_mph.toFixed(1) : '--.-';
-      }
-
-      // 2. Traveled Distance
-      if (valDist) {
-        valDist.textContent = (m.distance_m !== undefined) ? m.distance_m.toFixed(1) : '---.-';
-      }
-      if (valCompDist) {
-        valCompDist.textContent = (mComp && mComp.distance_m !== undefined) ? mComp.distance_m.toFixed(1) : '---.-';
-      }
-
-      // 3. Segment Time
-      if (valTime) {
-        valTime.textContent = (m.transit_time_sec !== undefined) ? m.transit_time_sec.toFixed(2) : '--.--';
-      }
-      if (valCompTime) {
-        valCompTime.textContent = (mComp && mComp.transit_time_sec !== undefined) ? mComp.transit_time_sec.toFixed(2) : '--.--';
-      }
-
-      // Render Deltas if comparison exists
-      if (rollCompare && deltas) {
-        renderDeltaBadge(deltaAvgSpeed, deltas.delta_avg_speed_mph, 'mph', true);
-        renderDeltaBadge(deltaDist, deltas.delta_distance_m, 'm', false); // lower distance is tighter line
-        renderDeltaBadge(deltaTime, deltas.delta_transit_time_sec, 's', false); // lower time is faster!
-      } else {
-        clearDeltaBadges();
-      }
-
-      // Update Chart & Map
-      telemetryChart.updateData(rollPrimary, rollCompare);
-      courseMap.updateTrajectories(rollPrimary, rollCompare, activeSegmentId);
-
+      compareCache.set(cacheKey, data);
+      renderComparisonData(data);
     } catch (e) {
       console.error('Error updating comparison view:', e);
+    } finally {
+      setStatsLoading(false);
+      setChartLoading(false);
+      setMapLoading(false);
+      setGlobalLoading(false);
     }
+  }
+
+  function renderComparisonData(data) {
+    if (!data || !data.roll2) return;
+    const rollPrimary = data.roll2; // Current roll
+    const rollCompare = compareRollId ? data.roll1 : null; // Comparison roll
+    const deltas = data.deltas;
+
+    // Update HUD Metrics (2 cards: Average Speed & Traveled Distance)
+    const m = rollPrimary.metrics || {};
+    const mComp = rollCompare ? (rollCompare.metrics || {}) : null;
+
+    // 1. Average Speed
+    if (valAvgSpeed) {
+      valAvgSpeed.textContent = (m.avg_speed_mph !== undefined) ? m.avg_speed_mph.toFixed(1) : '--.-';
+    }
+    if (valCompAvgSpeed) {
+      valCompAvgSpeed.textContent = (mComp && mComp.avg_speed_mph !== undefined) ? mComp.avg_speed_mph.toFixed(1) : '--.-';
+    }
+
+    // 2. Traveled Distance
+    if (valDist) {
+      valDist.textContent = (m.distance_m !== undefined) ? m.distance_m.toFixed(1) : '---.-';
+    }
+    if (valCompDist) {
+      valCompDist.textContent = (mComp && mComp.distance_m !== undefined) ? mComp.distance_m.toFixed(1) : '---.-';
+    }
+
+    // 3. Segment Time
+    if (valTime) {
+      valTime.textContent = (m.transit_time_sec !== undefined) ? m.transit_time_sec.toFixed(2) : '--.--';
+    }
+    if (valCompTime) {
+      valCompTime.textContent = (mComp && mComp.transit_time_sec !== undefined) ? mComp.transit_time_sec.toFixed(2) : '--.--';
+    }
+
+    // Render Deltas if comparison exists
+    if (rollCompare && deltas) {
+      renderDeltaBadge(deltaAvgSpeed, deltas.delta_avg_speed_mph, 'mph', true);
+      renderDeltaBadge(deltaDist, deltas.delta_distance_m, 'm', false);
+      renderDeltaBadge(deltaTime, deltas.delta_transit_time_sec, 's', false);
+    } else {
+      clearDeltaBadges();
+    }
+
+    // Update Chart & Map
+    telemetryChart.updateData(rollPrimary, rollCompare);
+    courseMap.updateTrajectories(rollPrimary, rollCompare, activeSegmentId);
   }
 
   function renderDeltaBadge(elem, deltaVal, unit, higherIsBetter) {
@@ -444,17 +530,23 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     btnRescan.addEventListener('click', async () => {
-      btnRescan.textContent = 'Scanning...';
+      btnRescan.disabled = true;
+      btnRescan.innerHTML = `<span class="loading-spinner-sm"></span> Scanning...`;
+      setGlobalLoading(true);
       try {
         await fetch('/api/scan', { method: 'POST' });
+        rollDetailCache.clear();
+        compareCache.clear();
         await fetchRolls();
         showToast('Rescan complete! Checked Bluetooth sync & USB paths.');
       } finally {
+        setGlobalLoading(false);
+        btnRescan.disabled = false;
         btnRescan.innerHTML = `<span>🔄</span> Rescan Devices`;
       }
     });
 
-    // Save Notes
+    // Save Notes with local immediate response and background Drive sync
     btnSaveNotes.addEventListener('click', async () => {
       if (!currentRollId) return;
 
@@ -470,6 +562,10 @@ document.addEventListener('DOMContentLoaded', () => {
         segment_notes: currentSegNotes
       };
 
+      const origBtnHtml = btnSaveNotes.innerHTML;
+      btnSaveNotes.disabled = true;
+      btnSaveNotes.innerHTML = `<span class="loading-spinner-sm"></span> Saving...`;
+
       try {
         const res = await fetch(`/api/notes/${currentRollId}`, {
           method: 'POST',
@@ -478,11 +574,40 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         const result = await res.json();
         if (result.success) {
-          if (currentRollDetail) currentRollDetail.notes = result.notes;
-          showToast('Driver notes saved successfully (saved locally & queued for Drive sync)!');
+          if (currentRollDetail) {
+            currentRollDetail.notes = result.notes;
+            rollDetailCache.set(currentRollId, currentRollDetail);
+          }
+
+          // Update roll in memory list
+          const rollInList = allRolls.find(r => r.roll_id === currentRollId);
+          if (rollInList) {
+            rollInList.has_notes = true;
+            rollInList.driver_name = payload.driver_name;
+            rollInList.buggy_name = payload.buggy_name;
+            populateSelects();
+          }
+
+          // Show immediate feedback badge
+          if (notesStatusBadge) {
+            const syncNotice = result.drive_syncing ? '✓ Saved (Drive syncing in background...)' : '✓ Saved';
+            notesStatusBadge.textContent = syncNotice;
+            notesStatusBadge.style.display = 'inline-flex';
+            setTimeout(() => {
+              if (notesStatusBadge.textContent.includes('Syncing')) {
+                notesStatusBadge.textContent = '✓ Saved & Synced';
+              }
+              setTimeout(() => { notesStatusBadge.style.display = 'none'; }, 3000);
+            }, 3000);
+          }
+
+          showToast(result.drive_syncing ? 'Notes saved! Syncing with Google Drive in background...' : 'Notes saved successfully!');
         }
       } catch (e) {
         showToast('Error saving notes');
+      } finally {
+        btnSaveNotes.disabled = false;
+        btnSaveNotes.innerHTML = origBtnHtml;
       }
     });
 
@@ -513,10 +638,14 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    // Drive sync button handler
+    // Drive sync button handler with clear visual state
     if (btnDriveSync) {
       btnDriveSync.addEventListener('click', async () => {
+        if (driveSyncIcon) driveSyncIcon.classList.add('spin-icon');
         driveSyncText.textContent = 'Checking...';
+        btnDriveSync.disabled = true;
+        setGlobalLoading(true);
+
         try {
           const statusRes = await fetch('/api/drive/status');
           const statusData = await statusRes.json();
@@ -528,7 +657,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const authRes = await fetch('/api/drive/auth', { method: 'POST' });
             const authData = await authRes.json();
             if (authData.success) {
-              showToast('Google Drive connected! Syncing data...');
+              showToast('Google Drive connected! Syncing data in background...');
               driveSyncText.textContent = 'Syncing...';
               const syncRes = await fetch('/api/drive/sync', { method: 'POST' });
               const syncData = await syncRes.json();
@@ -537,12 +666,14 @@ document.addEventListener('DOMContentLoaded', () => {
               const upCount = up.synced_count || 0;
               const downCount = down.downloaded_count || 0;
               showToast(`Connected & synced: uploaded ${upCount}, downloaded ${downCount} file(s).`);
+              rollDetailCache.clear();
+              compareCache.clear();
             } else {
               showToast('Authentication cancelled or failed: ' + (authData.error || ''));
             }
           } else {
             driveSyncText.textContent = 'Syncing...';
-            showToast('Syncing rolls and notes with Google Drive...');
+            showToast('Syncing rolls and notes with Google Drive in background...');
             const syncRes = await fetch('/api/drive/sync', { method: 'POST' });
             const syncData = await syncRes.json();
             const up = syncData.upload_result || {};
@@ -562,6 +693,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
               const msg = parts.length > 0 ? parts.join(', ') : 'everything up to date';
               showToast(`Sync complete: ${msg}.`);
+              rollDetailCache.clear();
+              compareCache.clear();
             } else {
               const errMsg = up.error || down.error || up.message || down.message || 'Sync encountered an issue.';
               showToast('Sync notice: ' + errMsg);
@@ -570,6 +703,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) {
           showToast('Drive sync error: ' + e);
         } finally {
+          if (driveSyncIcon) driveSyncIcon.classList.remove('spin-icon');
+          btnDriveSync.disabled = false;
+          setGlobalLoading(false);
           await fetchDriveStatus();
           await fetchRolls();
         }
@@ -580,6 +716,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function handleFileUpload(file) {
     const formData = new FormData();
     formData.append('file', file);
+    setGlobalLoading(true);
 
     try {
       showToast(`Uploading ${file.name}...`);
@@ -591,12 +728,16 @@ document.addEventListener('DOMContentLoaded', () => {
       if (data.success) {
         showToast(`Imported ${data.filename}! Processing telemetry...`);
         modalOverlay.classList.remove('open');
+        rollDetailCache.clear();
+        compareCache.clear();
         await fetchRolls();
       } else {
         showToast(`Upload failed: ${data.error}`);
       }
     } catch (e) {
       showToast('Error uploading file');
+    } finally {
+      setGlobalLoading(false);
     }
   }
 

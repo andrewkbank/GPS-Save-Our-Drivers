@@ -8,6 +8,7 @@ import io
 import os
 import json
 import glob
+import time
 from typing import Dict, Any, List, Optional
 
 from google.auth.transport.requests import Request
@@ -28,6 +29,10 @@ class DriveSyncHelper:
         self.config_path = config_path
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.config = self._load_config()
+        self._cached_status: Optional[Dict[str, Any]] = None
+        self._status_cache_time: float = 0.0
+        self._cached_folder_files: Optional[List[Dict[str, Any]]] = None
+        self._files_cache_time: float = 0.0
 
     def _load_config(self) -> Dict[str, Any]:
         if os.path.exists(self.config_path):
@@ -87,15 +92,19 @@ class DriveSyncHelper:
 
         return creds if (creds and creds.valid) else None
 
-    def get_status(self) -> Dict[str, Any]:
-        """Check Drive configuration, credentials, and connectivity."""
+    def get_status(self, force_refresh: bool = False, fast: bool = False) -> Dict[str, Any]:
+        """Check Drive configuration, credentials, and connectivity (cached with 60s TTL)."""
+        now = time.time()
+        if not force_refresh and self._cached_status is not None and (now - self._status_cache_time < 60.0):
+            return self._cached_status
+
         has_secret = bool(os.path.exists(self.client_secret_path))
         has_folder = bool(self.folder_id)
         creds = self.get_credentials()
         is_authenticated = bool(creds is not None)
 
         folder_name = None
-        if is_authenticated and has_folder:
+        if not fast and is_authenticated and has_folder:
             try:
                 service = build("drive", "v3", credentials=creds, cache_discovery=False)
                 folder_meta = service.files().get(
@@ -117,7 +126,7 @@ class DriveSyncHelper:
         elif folder_name:
             message = f"Connected to Google Drive folder: '{folder_name}'"
 
-        return {
+        status_result = {
             "enabled": self.config.get("enabled", True),
             "configured": has_secret and has_folder,
             "authenticated": is_authenticated,
@@ -126,6 +135,9 @@ class DriveSyncHelper:
             "client_secret_found": has_secret,
             "message": message
         }
+        self._cached_status = status_result
+        self._status_cache_time = now
+        return status_result
 
     def authenticate(self, port: int = 0) -> Dict[str, Any]:
         """Launch local browser server flow to authenticate user."""
@@ -145,6 +157,9 @@ class DriveSyncHelper:
 
             with open(self.token_path, "w", encoding="utf-8") as token_file:
                 token_file.write(creds.to_json())
+
+            self._cached_status = None
+            self._cached_folder_files = None
 
             return {
                 "success": True,
@@ -271,6 +286,7 @@ class DriveSyncHelper:
             skipped_count = len([s for s in synced if s["action"] == "skipped_already_exists"])
             active_synced_count = uploaded_count + updated_count
 
+            self._cached_folder_files = None
             return {
                 "success": True,
                 "synced_count": active_synced_count,
@@ -289,8 +305,12 @@ class DriveSyncHelper:
                 "message": f"Google Drive sync failed: {e}"
             }
 
-    def list_folder_files(self) -> List[Dict[str, Any]]:
-        """List all files currently residing in the target Google Drive folder using pagination."""
+    def list_folder_files(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        """List all files currently residing in the target Google Drive folder using pagination (cached with 60s TTL)."""
+        now = time.time()
+        if not force_refresh and self._cached_folder_files is not None and (now - self._files_cache_time < 60.0):
+            return self._cached_folder_files
+
         creds = self.get_credentials()
         if not creds or not self.folder_id:
             return []
@@ -315,6 +335,8 @@ class DriveSyncHelper:
                 if not page_token:
                     break
 
+            self._cached_folder_files = files
+            self._files_cache_time = now
             return files
         except Exception as e:
             print(f"[DriveSync] Error listing folder files: {e}")
@@ -407,6 +429,7 @@ class DriveSyncHelper:
                     "destination": dest_dir
                 })
 
+            self._cached_folder_files = None
             return {
                 "success": True,
                 "downloaded_count": len(downloaded),

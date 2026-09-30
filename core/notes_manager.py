@@ -19,6 +19,7 @@ class NotesManager:
             notes_dir = os.path.join(base_dir, "data", "notes")
         self.notes_dir = notes_dir
         os.makedirs(self.notes_dir, exist_ok=True)
+        self._notes_cache: Dict[str, Dict[str, Any]] = {}
 
     def _get_paths(self, roll_id: str):
         clean_id = roll_id.replace(":", "-").replace("/", "_")
@@ -77,10 +78,14 @@ class NotesManager:
                     if text and text.strip():
                         f.write(f"[{seg_id}]: {text.strip()}\n")
 
+        self._notes_cache[roll_id] = note_data
         return note_data
 
     def get_notes(self, roll_id: str) -> Dict[str, Any]:
-        """Load driver notes for a roll, or empty template if none exist."""
+        """Load driver notes for a roll, or empty template if none exist (in-memory cached)."""
+        if roll_id in self._notes_cache:
+            return self._notes_cache[roll_id]
+
         clean_id = roll_id.replace(":", "-").replace("/", "_")
         json_path, _ = self._get_paths(roll_id)
         
@@ -89,6 +94,7 @@ class NotesManager:
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 data.setdefault("gps_files", [])
+                self._notes_cache[roll_id] = data
                 return data
 
         # Fallback to legacy {clean_id}.json if present
@@ -98,11 +104,12 @@ class NotesManager:
                 with open(legacy_json, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     data.setdefault("gps_files", [])
+                    self._notes_cache[roll_id] = data
                     return data
             except Exception:
                 pass
 
-        return {
+        default_note = {
             "roll_id": roll_id,
             "driver_name": "",
             "buggy_name": "Apex Buggy",
@@ -111,3 +118,5 @@ class NotesManager:
             "segment_notes": {},
             "gps_files": []
         }
+        self._notes_cache[roll_id] = default_note
+        return default_note
